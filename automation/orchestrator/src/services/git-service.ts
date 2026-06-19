@@ -58,13 +58,20 @@ export const gitService = {
 
     const checkoutBase = await runGit('git.checkout-base', ['checkout', baseBranch], commands);
     if (checkoutBase.exitCode !== 0) {
+      const detail = (checkoutBase.stderr || checkoutBase.stdout || '').trim();
+      const branchList = await runGit('git.branch-list', ['branch', '--list'], commands);
+      const available = branchList.stdout
+        .split('\n')
+        .map((b) => b.replace(/^\*?\s+/, '').trim())
+        .filter(Boolean)
+        .join(', ');
       return {
         success: false,
         branchName,
         baseBranch,
         commands,
         warnings,
-        error: `Failed to checkout ${baseBranch}`,
+        error: `Failed to checkout ${baseBranch}${detail ? `: ${detail}` : ''}. Local branches: ${available || '(none)'}. Set DEFAULT_BASE_BRANCH in orchestrator/.env (this repo uses dev/master, not main).`,
       };
     }
 
