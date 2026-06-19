@@ -1,0 +1,165 @@
+{
+  "name": "Bugfix Control Panel",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "bugfix-panel",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "panel-get-001",
+      "name": "Panel: GET",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        200
+      ],
+      "webhookId": "bugfix-panel-get"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "/**\n * Serves the Bugfix Control Panel HTML (GET webhook).\n * Open the Production URL shown on the \"Panel: GET\" Webhook node in n8n.\n */\nconst PANEL_HTML = `<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n  <title>Bugfix Control Panel</title>\n  <style>\n    :root { font-family: system-ui, sans-serif; color: #1a1a2e; background: #f4f6fb; }\n    body { max-width: 720px; margin: 2rem auto; padding: 0 1rem; }\n    h1 { font-size: 1.35rem; margin-bottom: 0.25rem; }\n    .sub { color: #555; margin-bottom: 1.5rem; font-size: 0.95rem; }\n    label { display: block; font-weight: 600; margin: 1rem 0 0.35rem; }\n    select, input, textarea { width: 100%; box-sizing: border-box; padding: 0.55rem 0.65rem; border: 1px solid #ccd; border-radius: 6px; font: inherit; }\n    textarea { min-height: 140px; resize: vertical; }\n    button { margin-top: 1.25rem; background: #e74266; color: #fff; border: 0; padding: 0.65rem 1.2rem; border-radius: 6px; font: inherit; cursor: pointer; }\n    button:hover { background: #cf3c5c; }\n    button:disabled { opacity: 0.6; cursor: wait; }\n    #out { margin-top: 1.5rem; padding: 1rem; background: #fff; border: 1px solid #dde; border-radius: 8px; white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 0.85rem; min-height: 4rem; }\n    .hint { font-size: 0.85rem; color: #666; margin-top: 0.25rem; }\n    .links { margin: 1rem 0; font-size: 0.9rem; }\n    .links a { color: #e74266; }\n  </style>\n</head>\n<body>\n  <h1>Bugfix Control Panel</h1>\n  <p class=\"sub\">Run status, approve/reject, and new bug reports — linked to the local orchestrator via n8n.</p>\n  <div class=\"links\">\n    <a href=\"http://localhost:5678\" target=\"_blank\">n8n</a> ·\n    Watch progress in <strong>Executions</strong> on the Bugfix Chat / Action workflows\n  </div>\n  <form id=\"f\">\n    <label for=\"action\">Action</label>\n    <select id=\"action\" name=\"action\">\n      <option value=\"start\">Report bug (start run)</option>\n      <option value=\"status\">Check status</option>\n      <option value=\"approve\">Approve run</option>\n      <option value=\"reject\">Reject run</option>\n      <option value=\"create-pr\">Create GitHub PR</option>\n      <option value=\"cancel\">Cancel in-flight run</option>\n    </select>\n    <label for=\"runId\">Run ID</label>\n    <input id=\"runId\" name=\"runId\" placeholder=\"run_20260618_160000_abc123\" />\n    <p class=\"hint\">Required for status / approve / reject / create-pr / cancel. Leave empty when reporting a new bug.</p>\n    <label for=\"message\">Bug report or reason</label>\n    <textarea id=\"message\" name=\"message\" placeholder=\"[BUG] Title here&#10;&#10;component: frontend&#10;area: path/to/file.tsx&#10;&#10;Description of the bug...\"></textarea>\n    <p class=\"hint\">For new bugs use [BUG] format. For reject, optional reason text.</p>\n    <button type=\"submit\" id=\"btn\">Submit</button>\n  </form>\n  <div id=\"out\">Ready.</div>\n  <script>\n    const ACTION_URL = window.location.origin + '/webhook/bugfix-action';\n    const form = document.getElementById('f');\n    const out = document.getElementById('out');\n    const btn = document.getElementById('btn');\n    const actionEl = document.getElementById('action');\n    const runIdEl = document.getElementById('runId');\n    const messageEl = document.getElementById('message');\n\n    actionEl.addEventListener('change', () => {\n      const a = actionEl.value;\n      runIdEl.required = a !== 'start';\n      messageEl.required = a === 'start';\n    });\n\n    form.addEventListener('submit', async (e) => {\n      e.preventDefault();\n      btn.disabled = true;\n      out.textContent = 'Working… (check n8n Executions for live progress on long runs)';\n      try {\n        const res = await fetch(ACTION_URL, {\n          method: 'POST',\n          headers: { 'Content-Type': 'application/json' },\n          body: JSON.stringify({\n            action: actionEl.value,\n            runId: runIdEl.value.trim(),\n            message: messageEl.value.trim(),\n          }),\n        });\n        const text = await res.text();\n        let data;\n        try { data = JSON.parse(text); } catch { data = { response: text }; }\n        out.textContent = data.response || data.output || JSON.stringify(data, null, 2);\n        if (data.runId) runIdEl.value = data.runId;\n      } catch (err) {\n        out.textContent = 'Error: ' + (err.message || err);\n      } finally {\n        btn.disabled = false;\n      }\n    });\n  </script>\n</body>\n</html>`;\n\nreturn [{ json: { html: PANEL_HTML } }];\n"
+      },
+      "id": "panel-html-001",
+      "name": "Build HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "panel-respond-html-001",
+      "name": "Respond HTML",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        720,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bugfix-action",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "panel-post-001",
+      "name": "Panel: POST action",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        420
+      ],
+      "webhookId": "bugfix-panel-action"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "/**\n * Bugfix Control Panel — POST handler (approve / reject / status / start / etc.)\n * Body: { \"action\": \"start|status|approve|reject|create-pr|cancel\", \"runId\": \"...\", \"message\": \"...\" }\n */\n\nconst CONFIG = {\n  ORCHESTRATOR_URL: 'http://127.0.0.1:4400',\n  ORCHESTRATOR_API_KEY: '',\n};\n\nconst ALLOWED_COMPONENTS = new Set(['frontend', 'backend', 'fullstack', 'unknown']);\nconst ALLOWED_SEVERITIES = new Set(['low', 'medium', 'high', 'critical']);\n\nconst ORCHESTRATOR_URL = ($env.ORCHESTRATOR_URL || CONFIG.ORCHESTRATOR_URL || 'http://127.0.0.1:4400').replace(/\\/$/, '');\nconst API_KEY = $env.ORCHESTRATOR_API_KEY || CONFIG.ORCHESTRATOR_API_KEY;\n\nfunction result(text, extra = {}) {\n  return [{ json: { response: text, output: text, ...extra } }];\n}\n\nfunction normalizeComponent(value) {\n  const v = String(value || 'unknown').toLowerCase().trim();\n  if (ALLOWED_COMPONENTS.has(v)) return v;\n  if (v.includes('front')) return 'frontend';\n  if (v.includes('back') || v.includes('api')) return 'backend';\n  return 'unknown';\n}\n\nfunction normalizeSeverity(value) {\n  const v = String(value || 'medium').toLowerCase().trim();\n  return ALLOWED_SEVERITIES.has(v) ? v : 'medium';\n}\n\nfunction formatApiError(err) {\n  const status = err.statusCode ?? err.response?.statusCode ?? 'unknown';\n  const body = err.response?.body ?? err.response?.data;\n  if (body?.error?.message) return body.error.message;\n  if (body?.error?.code === 'REPO_LOCK_HELD') {\n    const active = body.error.activeRunId ?? body.activeRunId;\n    return `${body.error.message}${active ? `\\n\\nActive run: ${active}\\n→ Check status, Approve, or Reject that run in the panel first.` : ''}`;\n  }\n  if (body) return typeof body === 'string' ? body : JSON.stringify(body, null, 2);\n  return err.message ?? 'Request failed';\n}\n\nasync function apiRequest(method, path, body) {\n  try {\n    return await this.helpers.httpRequest({\n      method,\n      url: `${ORCHESTRATOR_URL}${path}`,\n      headers: {\n        Authorization: `Bearer ${API_KEY}`,\n        'Content-Type': 'application/json',\n        Accept: 'application/json',\n      },\n      body,\n      json: true,\n      timeout: 300000,\n    });\n  } catch (err) {\n    throw new Error(formatApiError(err));\n  }\n}\n\nfunction formatRunSummary(run) {\n  const analysis = run.analysis ?? {};\n  const validation = run.validation ?? {};\n  const git = run.git ?? {};\n  const files = (analysis.changedFiles ?? []).join(', ') || '(none)';\n  return [\n    `Run: ${run.runId}`,\n    `Status: ${run.status}`,\n    `Branch: ${git.branchName ?? 'n/a'}`,\n    '',\n    'Summary:',\n    analysis.bugSummary ?? '(pending)',\n    '',\n    'Root cause:',\n    analysis.rootCauseSummary ?? '(pending)',\n    '',\n    `Changed files: ${files}`,\n    '',\n    'Validation:',\n    `- buildPassed: ${validation.buildPassed ?? validation.passed ?? 'n/a'}`,\n    `- testsPassed: ${validation.testsPassed ?? 'n/a'}`,\n    validation.failureReason ? `- failureReason: ${validation.failureReason}` : '',\n    '',\n    `Artifacts: automation/artifacts/${run.runId}/`,\n    '',\n    run.status === 'awaiting_approval' ? '→ Use Approve or Reject in this panel.' : '',\n    run.error?.message === 'DIRTY_WORKING_TREE'\n      ? 'Error: DIRTY_WORKING_TREE\\n→ Uncommitted files in repo. For local demo: ALLOW_DIRTY_REPO=true in automation/orchestrator/.env, restart orchestrator (npm run dev), submit again.'\n      : run.error ? `Error: ${run.error.message}` : '',\n  ].filter(Boolean).join('\\n');\n}\n\nasync function pollRun(runId) {\n  const terminal = new Set(['awaiting_approval', 'approved', 'rejected', 'pr_created', 'failed']);\n  for (let i = 0; i < 90; i++) {\n    const run = await apiRequest.call(this, 'GET', `/runs/${runId}`);\n    if (terminal.has(run.status)) return run;\n    await new Promise((r) => setTimeout(r, 5000));\n  }\n  throw new Error(`Timed out waiting for ${runId}. Use Check status later.`);\n}\n\nfunction parsePanelRequest(raw) {\n  if (!raw || typeof raw !== 'object') {\n    return { action: 'start', runId: '', message: String(raw ?? '').trim() };\n  }\n\n  // n8n 1.82 Webhook wraps POST JSON under .body (not top-level fields)\n  let payload = raw;\n  if (raw.body !== undefined && raw.body !== null) {\n    if (typeof raw.body === 'string') {\n      try {\n        payload = JSON.parse(raw.body);\n      } catch {\n        payload = { message: raw.body };\n      }\n    } else if (typeof raw.body === 'object' && !Array.isArray(raw.body)) {\n      payload = raw.body;\n    }\n  }\n\n  const action = String(\n    payload.action ?? raw.action ?? 'start',\n  ).toLowerCase().trim();\n\n  const runId = String(\n    payload.runId ?? payload.run_id ?? raw.runId ?? raw.run_id ?? '',\n  ).trim();\n\n  const message = String(\n    payload.message\n    ?? payload.text\n    ?? payload.bugReport\n    ?? raw.message\n    ?? raw.text\n    ?? '',\n  ).trim();\n\n  return { action, runId, message, _debugKeys: Object.keys(raw).join(', ') };\n}\n\nfunction parseBugIntake(text) {\n  let body = text;\n  let title = 'Bug report from control panel';\n  let component = 'unknown';\n  let affectedArea;\n  let severity = 'medium';\n\n  const bugMatch = text.match(/^\\[BUG\\]\\s*(.+?)(?:\\n|$)/i);\n  if (bugMatch) {\n    title = bugMatch[1].trim().slice(0, 200);\n    body = text.slice(bugMatch[0].length).trim();\n  }\n\n  const componentMatch = body.match(/^component:\\s*(.+)$/im);\n  if (componentMatch) component = normalizeComponent(componentMatch[1]);\n  const areaMatch = body.match(/^area:\\s*(.+)$/im);\n  if (areaMatch) affectedArea = areaMatch[1].trim();\n  const severityMatch = body.match(/^severity:\\s*(.+)$/im);\n  if (severityMatch) severity = normalizeSeverity(severityMatch[1]);\n\n  let description = body.trim() || title || text.trim() || 'Bug report via control panel';\n  const bug = {\n    title: title.slice(0, 200),\n    description: description.slice(0, 8000),\n    severity,\n    component,\n    environment: 'local-dev',\n  };\n  if (affectedArea) bug.affectedArea = affectedArea;\n\n  return {\n    contractVersion: '1.0.0',\n    source: 'chat',\n    messageId: `n8n-panel-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@local`,\n    receivedAt: new Date().toISOString(),\n    reporter: { email: 'n8n-panel@example.com', name: 'Control Panel User' },\n    bug,\n    metadata: {\n      emailSubject: `[BUG] ${title}`,\n      rawEmailSnippet: text.slice(0, 500),\n      labels: ['n8n-panel', 'demo'],\n    },\n  };\n}\n\ntry {\n  if (!API_KEY) {\n    return result('Missing ORCHESTRATOR_API_KEY in n8n-local/.env or CONFIG in this node.');\n  }\n\n  const body = $input.first().json ?? {};\n  const { action, runId, message, _debugKeys } = parsePanelRequest(body);\n\n  if (action === 'status') {\n    if (!runId) return result('Run ID is required for Check status.');\n    const run = await apiRequest.call(this, 'GET', `/runs/${runId}`);\n    return result(formatRunSummary(run), { runId });\n  }\n\n  if (action === 'approve') {\n    if (!runId) return result('Run ID is required.');\n    const r = await apiRequest.call(this, 'POST', `/runs/${runId}/approve`, {\n      approvedBy: 'n8n-panel@example.com',\n      comment: message || 'Approved via control panel',\n      createPr: false,\n    });\n    return result(`Approved ${runId}\\nStatus: ${r.status}\\n\\nNext: Create PR action if needed.`, { runId });\n  }\n\n  if (action === 'reject') {\n    if (!runId) return result('Run ID is required.');\n    const r = await apiRequest.call(this, 'POST', `/runs/${runId}/reject`, {\n      rejectedBy: 'n8n-panel@example.com',\n      reason: message || 'Rejected via control panel',\n    });\n    return result(`Rejected ${runId}\\nStatus: ${r.status}`, { runId });\n  }\n\n  if (action === 'create-pr') {\n    if (!runId) return result('Run ID is required.');\n    const r = await apiRequest.call(this, 'POST', `/runs/${runId}/create-pr`, { draft: false });\n    return result([\n      `PR step for ${runId}`,\n      `Status: ${r.status}`,\n      r.git?.prUrl ? `PR: ${r.git.prUrl}` : '',\n      r.error ? `Error: ${r.error.message}` : '',\n    ].filter(Boolean).join('\\n'), { runId });\n  }\n\n  if (action === 'cancel') {\n    if (!runId) return result('Run ID is required.');\n    const r = await apiRequest.call(this, 'POST', `/runs/${runId}/cancel`, {\n      cancelledBy: 'n8n-panel@example.com',\n      reason: message || 'Cancelled via control panel',\n    });\n    return result(`Cancelled ${runId}\\nStatus: ${r.status}`, { runId });\n  }\n\n  // start (default)\n  if (!message) {\n    return result([\n      'Bug report text is required. Paste into \"Bug report or reason\" (not Run ID).',\n      '',\n      'Example first line: [BUG] Purchased policy still shows on Browse Policies',\n      '',\n      `Debug: webhook keys at Code node = ${_debugKeys || '(empty)'}`,\n      'If you filled the form, re-import bugfix-control-panel.json (nested body fix).',\n    ].join('\\n'));\n  }\n\n  const started = await apiRequest.call(this, 'POST', '/runs/start', parseBugIntake(message));\n  const run = await pollRun.call(this, started.runId);\n\n  return result([\n    `Started ${started.runId}`,\n    `Branch: ${started.branchName}`,\n    '',\n    formatRunSummary(run),\n    '',\n    'Tip: open n8n → Executions to watch the workflow while agent runs.',\n  ].join('\\n'), { runId: started.runId });\n} catch (err) {\n  return result(`Error:\\n${err.message ?? err}`);\n}\n"
+      },
+      "id": "panel-action-001",
+      "name": "Run action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { response: $json.response, runId: $json.runId } }}",
+        "options": {}
+      },
+      "id": "panel-respond-json-001",
+      "name": "Respond JSON",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        720,
+        420
+      ]
+    }
+  ],
+  "connections": {
+    "Panel: GET": {
+      "main": [
+        [
+          {
+            "node": "Build HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build HTML": {
+      "main": [
+        [
+          {
+            "node": "Respond HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Panel: POST action": {
+      "main": [
+        [
+          {
+            "node": "Run action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run action": {
+      "main": [
+        [
+          {
+            "node": "Respond JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "bugfix-demo"
+    }
+  ],
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

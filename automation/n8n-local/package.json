@@ -1,0 +1,16 @@
+{
+  "name": "n8n-local-runner",
+  "private": true,
+  "description": "Local n8n install with registry xlsx override (corporate CDN/proxy workaround)",
+  "scripts": {
+    "start": "dotenv -e .env -- n8n start",
+    "n8n": "dotenv -e .env -- n8n"
+  },
+  "dependencies": {
+    "dotenv-cli": "^8.0.0",
+    "n8n": "1.82.3"
+  },
+  "overrides": {
+    "xlsx": "npm:xlsx@0.18.5"
+  }
+}

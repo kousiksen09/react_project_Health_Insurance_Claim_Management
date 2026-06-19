@@ -1,0 +1,61 @@
+{
+  "name": "Bugfix Chat Demo",
+  "nodes": [
+    {
+      "parameters": {
+        "options": {
+          "responseMode": "lastNode"
+        }
+      },
+      "id": "chat-trigger-001",
+      "name": "When chat message received",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "bugfix-chat-demo"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "/**\n * n8n Code node — Chat Trigger demo (n8n 1.82 compatible).\n * Returns { output: \"...\" } for \"When Last Node Finishes\" mode.\n */\n\nconst CONFIG = {\n  ORCHESTRATOR_URL: 'http://127.0.0.1:4400',\n  ORCHESTRATOR_API_KEY: '',\n};\n\nconst ALLOWED_COMPONENTS = new Set(['frontend', 'backend', 'fullstack', 'unknown']);\nconst ALLOWED_SEVERITIES = new Set(['low', 'medium', 'high', 'critical']);\n\nconst ORCHESTRATOR_URL = ($env.ORCHESTRATOR_URL || CONFIG.ORCHESTRATOR_URL || 'http://127.0.0.1:4400').replace(/\\/$/, '');\nconst API_KEY = $env.ORCHESTRATOR_API_KEY || CONFIG.ORCHESTRATOR_API_KEY;\n\nfunction reply(text) {\n  return [{ json: { output: text } }];\n}\n\nfunction extractChatInput(raw) {\n  if (typeof raw === 'string') return raw.trim();\n  if (!raw || typeof raw !== 'object') return '';\n\n  return String(\n    raw.chatInput\n    ?? raw.input\n    ?? raw.text\n    ?? raw.message\n    ?? raw.chatMessage\n    ?? raw.body?.chatInput\n    ?? raw.body?.message\n    ?? raw.body?.text\n    ?? (typeof raw.body === 'string' ? raw.body : '')\n    ?? '',\n  ).trim();\n}\n\nfunction normalizeComponent(value) {\n  const v = String(value || 'unknown').toLowerCase().trim();\n  if (ALLOWED_COMPONENTS.has(v)) return v;\n  if (v.includes('front')) return 'frontend';\n  if (v.includes('back') || v.includes('api') || v.includes('dotnet')) return 'backend';\n  if (v.includes('full')) return 'fullstack';\n  return 'unknown';\n}\n\nfunction normalizeSeverity(value) {\n  const v = String(value || 'medium').toLowerCase().trim();\n  return ALLOWED_SEVERITIES.has(v) ? v : 'medium';\n}\n\nfunction formatApiError(err) {\n  const status = err.statusCode ?? err.response?.statusCode ?? err.httpCode ?? 'unknown';\n  const body = err.response?.body ?? err.response?.data ?? err.error;\n  if (body) {\n    if (typeof body === 'string') return `HTTP ${status}: ${body}`;\n    if (body.error?.message) return `HTTP ${status}: ${body.error.message}`;\n    return `HTTP ${status}: ${JSON.stringify(body, null, 2)}`;\n  }\n  return `HTTP ${status}: ${err.message ?? 'Request failed'}`;\n}\n\nasync function apiRequest(method, path, body) {\n  try {\n    return await this.helpers.httpRequest({\n      method,\n      url: `${ORCHESTRATOR_URL}${path}`,\n      headers: {\n        Authorization: `Bearer ${API_KEY}`,\n        'Content-Type': 'application/json',\n        Accept: 'application/json',\n      },\n      body,\n      json: true,\n      timeout: 300000,\n    });\n  } catch (err) {\n    throw new Error(formatApiError(err));\n  }\n}\n\nfunction formatRunSummary(run) {\n  const analysis = run.analysis ?? {};\n  const validation = run.validation ?? {};\n  const git = run.git ?? {};\n  const files = (analysis.changedFiles ?? []).join(', ') || '(none)';\n  return [\n    `Run: ${run.runId}`,\n    `Status: ${run.status}`,\n    `Branch: ${git.branchName ?? 'n/a'}`,\n    '',\n    'Summary:',\n    analysis.bugSummary ?? '(pending)',\n    '',\n    'Root cause:',\n    analysis.rootCauseSummary ?? '(pending)',\n    '',\n    `Changed files: ${files}`,\n    '',\n    'Validation:',\n    `- buildPassed: ${validation.buildPassed ?? validation.passed ?? 'n/a'}`,\n    `- testsPassed: ${validation.testsPassed ?? 'n/a'}`,\n    `- testSummary: ${validation.testSummary ?? 'n/a'}`,\n    validation.failureReason ? `- failureReason: ${validation.failureReason}` : '',\n    '',\n    `Artifacts: automation/artifacts/${run.runId}/`,\n    '',\n    run.status === 'awaiting_approval'\n      ? `To approve: approve ${run.runId}\\nTo reject: reject ${run.runId} reason here`\n      : '',\n    run.error?.message === 'DIRTY_WORKING_TREE'\n      ? 'Error: DIRTY_WORKING_TREE — set ALLOW_DIRTY_REPO=true in orchestrator/.env and restart orchestrator'\n      : run.error ? `Error: ${run.error.message}` : '',\n  ].filter(Boolean).join('\\n');\n}\n\nasync function pollRun(runId) {\n  const terminal = new Set([\n    'awaiting_approval',\n    'approved',\n    'rejected',\n    'pr_created',\n    'failed',\n  ]);\n  for (let attempt = 0; attempt < 90; attempt++) {\n    const run = await apiRequest.call(this, 'GET', `/runs/${runId}`);\n    if (terminal.has(run.status)) {\n      return run;\n    }\n    await new Promise((resolve) => setTimeout(resolve, 5000));\n  }\n  throw new Error(`Timed out waiting for run ${runId}`);\n}\n\nfunction parseBugIntake(text) {\n  const approveMatch = text.match(/^(approve|reject|create-pr|status|cancel)\\s+(\\S+)/i);\n  if (approveMatch) {\n    return { command: approveMatch[1].toLowerCase(), runId: approveMatch[2], rest: text.slice(approveMatch[0].length).trim() };\n  }\n\n  let body = text;\n  let title = 'Bug report from n8n chat';\n  let component = 'unknown';\n  let affectedArea;\n  let severity = 'medium';\n\n  const bugMatch = text.match(/^\\[BUG\\]\\s*(.+?)(?:\\n|$)/i);\n  if (bugMatch) {\n    title = bugMatch[1].trim().slice(0, 200);\n    body = text.slice(bugMatch[0].length).trim();\n  } else {\n    const lines = text.split('\\n').map((l) => l.trim()).filter(Boolean);\n    if (lines.length > 1) {\n      title = lines[0].slice(0, 200);\n      body = lines.slice(1).join('\\n');\n    } else if (lines.length === 1) {\n      title = lines[0].slice(0, 200);\n      body = lines[0];\n    }\n  }\n\n  const componentMatch = body.match(/^component:\\s*(.+)$/im);\n  if (componentMatch) {\n    component = normalizeComponent(componentMatch[1]);\n  }\n  const areaMatch = body.match(/^area:\\s*(.+)$/im);\n  if (areaMatch) {\n    affectedArea = areaMatch[1].trim();\n  }\n  const severityMatch = body.match(/^severity:\\s*(.+)$/im);\n  if (severityMatch) {\n    severity = normalizeSeverity(severityMatch[1]);\n  }\n\n  let description = body.trim();\n  if (!description) {\n    description = title.trim() || text.trim() || 'Bug report submitted via n8n chat';\n  }\n  if (!title.trim()) {\n    title = 'Bug report from n8n chat';\n  }\n\n  const messageId = `n8n-chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@local`;\n  const now = new Date().toISOString();\n\n  const bug = {\n    title: title.slice(0, 200),\n    description: description.slice(0, 8000),\n    severity,\n    component,\n    environment: 'local-dev',\n  };\n  if (affectedArea) {\n    bug.affectedArea = affectedArea;\n  }\n\n  return {\n    command: 'start',\n    payload: {\n      contractVersion: '1.0.0',\n      source: 'chat',\n      messageId,\n      receivedAt: now,\n      reporter: {\n        email: 'n8n-chat@example.com',\n        name: 'n8n Chat User',\n      },\n      bug,\n      metadata: {\n        emailSubject: `[BUG] ${title}`,\n        rawEmailSnippet: text.slice(0, 500),\n        labels: ['n8n-chat', 'demo'],\n      },\n    },\n  };\n}\n\ntry {\n  if (!API_KEY) {\n    return reply([\n      'Missing ORCHESTRATOR_API_KEY.',\n      'Set automation/n8n-local/.env or CONFIG.ORCHESTRATOR_API_KEY in this node.',\n    ].join('\\n'));\n  }\n\n  const raw = $input.first().json ?? {};\n  const chatInput = extractChatInput(raw);\n\n  if (!chatInput) {\n    const keys = Object.keys(raw).join(', ') || '(empty)';\n    return reply([\n      'No chat message text found.',\n      `Fields received: ${keys}`,\n      '',\n      'Send a bug report like:',\n      '[BUG] Notification label shows ClaimSubmitted',\n      '',\n      'component: frontend',\n      'area: healthinsuranceclaim_frontend/src/features/notifications/components/NotificationsPage.tsx',\n      '',\n      'On /notifications the chip shows ClaimSubmitted instead of Claim Submitted.',\n    ].join('\\n'));\n  }\n\n  const parsed = parseBugIntake(chatInput);\n\n  if (parsed.command === 'reject') {\n    const result = await apiRequest.call(this, 'POST', `/runs/${parsed.runId}/reject`, {\n      rejectedBy: 'n8n-chat@example.com',\n      reason: parsed.rest || 'Rejected via n8n chat',\n    });\n    return reply(`Rejected ${parsed.runId} — status: ${result.status}`);\n  }\n\n  if (parsed.command === 'create-pr') {\n    const result = await apiRequest.call(this, 'POST', `/runs/${parsed.runId}/create-pr`, {\n      draft: false,\n    });\n    return reply([\n      `PR step for ${parsed.runId}`,\n      `Status: ${result.status}`,\n      result.git?.prUrl ? `PR: ${result.git.prUrl}` : '',\n      result.error ? `Error: ${result.error.message}` : '',\n    ].filter(Boolean).join('\\n'));\n  }\n\n  if (parsed.command === 'approve') {\n    const result = await apiRequest.call(this, 'POST', `/runs/${parsed.runId}/approve`, {\n      approvedBy: 'n8n-chat@example.com',\n      comment: 'Approved via n8n chat',\n      createPr: false,\n    });\n    return reply([\n      `Approved ${parsed.runId}`,\n      `Status: ${result.status}`,\n      result.error ? `Note: ${result.error.message}` : 'Use create-pr <runId> when ready.',\n    ].join('\\n'));\n  }\n\n  if (parsed.command === 'status') {\n    const run = await apiRequest.call(this, 'GET', `/runs/${parsed.runId}`);\n    return reply(formatRunSummary(run));\n  }\n\n  if (parsed.command === 'cancel') {\n    const result = await apiRequest.call(this, 'POST', `/runs/${parsed.runId}/cancel`, {\n      cancelledBy: 'n8n-chat@example.com',\n      reason: 'Cancelled via n8n chat',\n    });\n    return reply(`Cancelled ${parsed.runId} — status: ${result.status}`);\n  }\n\n  const started = await apiRequest.call(this, 'POST', '/runs/start', parsed.payload);\n  const run = await pollRun.call(this, started.runId);\n\n  return reply([\n    `Started bug-fix run ${started.runId}`,\n    `Branch: ${started.branchName}`,\n    '',\n    formatRunSummary(run),\n  ].join('\\n'));\n} catch (err) {\n  return reply(`Orchestrator error:\\n${err.message ?? err}`);\n}\n"
+      },
+      "id": "process-message-001",
+      "name": "Process message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "Process message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "bugfix-demo"
+    }
+  ],
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

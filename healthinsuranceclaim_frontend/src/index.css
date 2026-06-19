@@ -1,0 +1,18 @@
+/* Hide Material-UI accessibility warnings */
+.MuiModal-root {
+  isolation: isolate;
+}
+
+/* Prevent aria-hidden conflicts */
+#root[aria-hidden="true"] {
+  display: block !important;
+}
+
+/* Fix DatePicker portal issues */
+.MuiPickersPopper-root {
+  z-index: 9999 !important;
+}
+
+.MuiModal-backdrop {
+  z-index: -1 !important;
+}

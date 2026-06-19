@@ -1,0 +1,1 @@
+export { CustomerDashboardPage } from './components/CustomerDashboardPage';
