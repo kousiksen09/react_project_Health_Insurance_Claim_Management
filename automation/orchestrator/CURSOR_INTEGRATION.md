@@ -156,9 +156,10 @@ healthinsuranceclaim_frontend/src/features/notifications/components/Notification
 |-------|--------|
 | `DIRTY_WORKING_TREE` | Commit/stash or `ALLOW_DIRTY_REPO=true` |
 | `REPO_LOCK_HELD` | Wait for run or `POST /runs/:id/cancel` |
+| `Cannot find package '@connectrpc/connect-node'` | Run `npm install` in `automation/orchestrator` (deps now in package.json) |
 | Agent error | `agent-transcript.md`, `run-log.jsonl` |
 | No changed files (dry-run) | Set `CURSOR_API_KEY`, `CURSOR_DRY_RUN=false` |
-| Branch checkout fails | Local `main` exists; try `git fetch origin main` |
+| Branch checkout fails | Set `DEFAULT_BASE_BRANCH=dev` or `master` (this repo has no `main`) |
 
 ## Related docs
 
