@@ -189,7 +189,7 @@ textarea{min-height:140px;resize:vertical}
 </main>
 
 <script>
-const ACTION_URL = window.location.origin + '/webhook/bugfix-action';
+const ACTION_URL = window.location.origin + '/webhook/bugfix/action';
 const HISTORY_KEY = 'bf_runs_v2';
 const STATUS_EMOJI = {
   queued:'🕐',analyzing:'🔍',patch_created:'🔧',validating:'🧪',
@@ -310,7 +310,10 @@ $('submitBug').addEventListener('click', async () => {
       $('reviewId').value = res.runId;
     }
   } catch(e) {
-    showResult('reportResult','Network error: '+e.message, true);
+    const hint = e.message.includes('fetch') || e.message.includes('Failed')
+      ? '\n\nCheck: is the "Bug Fix Dashboard" workflow active in n8n?\nURL tried: ' + ACTION_URL
+      : '';
+    showResult('reportResult', 'Error: ' + e.message + hint, true);
   } finally {
     btn.disabled=false;
     btn.innerHTML='🚀 Start Bug Fix';
