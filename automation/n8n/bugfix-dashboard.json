@@ -94,14 +94,21 @@
           "values": [
             {
               "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
                 "conditions": [
                   {
+                    "id": "cond-error",
                     "leftValue": "={{ $json.action }}",
                     "rightValue": "error",
                     "operator": {
                       "type": "string",
                       "operation": "equals",
-                      "singleValue": true
+                      "name": "filter.operator.equals"
                     }
                   }
                 ],
@@ -112,14 +119,21 @@
             },
             {
               "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
                 "conditions": [
                   {
+                    "id": "cond-start",
                     "leftValue": "={{ $json.action }}",
                     "rightValue": "start",
                     "operator": {
                       "type": "string",
                       "operation": "equals",
-                      "singleValue": true
+                      "name": "filter.operator.equals"
                     }
                   }
                 ],
@@ -130,14 +144,21 @@
             },
             {
               "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
                 "conditions": [
                   {
+                    "id": "cond-status",
                     "leftValue": "={{ $json.action }}",
                     "rightValue": "status",
                     "operator": {
                       "type": "string",
                       "operation": "equals",
-                      "singleValue": true
+                      "name": "filter.operator.equals"
                     }
                   }
                 ],
@@ -148,14 +169,21 @@
             },
             {
               "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
                 "conditions": [
                   {
+                    "id": "cond-approve",
                     "leftValue": "={{ $json.action }}",
                     "rightValue": "approve",
                     "operator": {
                       "type": "string",
                       "operation": "equals",
-                      "singleValue": true
+                      "name": "filter.operator.equals"
                     }
                   }
                 ],
@@ -166,14 +194,21 @@
             },
             {
               "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
                 "conditions": [
                   {
+                    "id": "cond-reject",
                     "leftValue": "={{ $json.action }}",
                     "rightValue": "reject",
                     "operator": {
                       "type": "string",
                       "operation": "equals",
-                      "singleValue": true
+                      "name": "filter.operator.equals"
                     }
                   }
                 ],
@@ -184,14 +219,21 @@
             },
             {
               "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
                 "conditions": [
                   {
+                    "id": "cond-create-pr",
                     "leftValue": "={{ $json.action }}",
                     "rightValue": "create-pr",
                     "operator": {
                       "type": "string",
                       "operation": "equals",
-                      "singleValue": true
+                      "name": "filter.operator.equals"
                     }
                   }
                 ],
@@ -202,14 +244,21 @@
             },
             {
               "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
                 "conditions": [
                   {
+                    "id": "cond-cancel",
                     "leftValue": "={{ $json.action }}",
                     "rightValue": "cancel",
                     "operator": {
                       "type": "string",
                       "operation": "equals",
-                      "singleValue": true
+                      "name": "filter.operator.equals"
                     }
                   }
                 ],
@@ -220,12 +269,15 @@
             }
           ]
         },
-        "options": {}
+        "options": {
+          "fallbackOutput": "none"
+        },
+        "looseTypeValidation": true
       },
       "id": "dash-switch-001",
       "name": "🔀 Route by Action",
       "type": "n8n-nodes-base.switch",
-      "typeVersion": 3,
+      "typeVersion": 3.2,
       "position": [
         680,
         500

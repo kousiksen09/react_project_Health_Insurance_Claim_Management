@@ -175,68 +175,46 @@ const dashboardWorkflow = {
       id: 'dash-parse-001', name: '📥 Parse Request', type: 'n8n-nodes-base.code',
       typeVersion: 2, position: [440, 500],
     },
-    // Switch node — routes on $json.action
-    {
-      parameters: {
-        mode: 'rules',
-        rules: {
-          values: [
-            {
-              conditions: {
-                conditions: [{ leftValue: '={{ $json.action }}', rightValue: 'error', operator: { type: 'string', operation: 'equals', singleValue: true } }],
-                combinator: 'and',
-              },
-              renameOutput: true, outputKey: '⚠️ Error',
-            },
-            {
-              conditions: {
-                conditions: [{ leftValue: '={{ $json.action }}', rightValue: 'start', operator: { type: 'string', operation: 'equals', singleValue: true } }],
-                combinator: 'and',
-              },
-              renameOutput: true, outputKey: '🐛 Start Bug Fix',
-            },
-            {
-              conditions: {
-                conditions: [{ leftValue: '={{ $json.action }}', rightValue: 'status', operator: { type: 'string', operation: 'equals', singleValue: true } }],
-                combinator: 'and',
-              },
-              renameOutput: true, outputKey: '📊 Check Status',
-            },
-            {
-              conditions: {
-                conditions: [{ leftValue: '={{ $json.action }}', rightValue: 'approve', operator: { type: 'string', operation: 'equals', singleValue: true } }],
-                combinator: 'and',
-              },
-              renameOutput: true, outputKey: '✅ Approve Run',
-            },
-            {
-              conditions: {
-                conditions: [{ leftValue: '={{ $json.action }}', rightValue: 'reject', operator: { type: 'string', operation: 'equals', singleValue: true } }],
-                combinator: 'and',
-              },
-              renameOutput: true, outputKey: '❌ Reject Run',
-            },
-            {
-              conditions: {
-                conditions: [{ leftValue: '={{ $json.action }}', rightValue: 'create-pr', operator: { type: 'string', operation: 'equals', singleValue: true } }],
-                combinator: 'and',
-              },
-              renameOutput: true, outputKey: '📦 Create GitHub PR',
-            },
-            {
-              conditions: {
-                conditions: [{ leftValue: '={{ $json.action }}', rightValue: 'cancel', operator: { type: 'string', operation: 'equals', singleValue: true } }],
-                combinator: 'and',
-              },
-              renameOutput: true, outputKey: '🚫 Cancel Run',
-            },
-          ],
+    // Switch node — routes on $json.action.
+    // NOTE: Switch v3 (n8n ≥ 1.x) requires each `conditions` block to include an inner
+    // `options` object with caseSensitive/typeValidation, otherwise it throws
+    // "Cannot read properties of undefined (reading 'caseSensitive')" at runtime.
+    (() => {
+      const mkRule = (action, outputKey) => ({
+        conditions: {
+          options: { caseSensitive: true, leftValue: '', typeValidation: 'loose', version: 2 },
+          conditions: [{
+            id: 'cond-' + action,
+            leftValue: '={{ $json.action }}',
+            rightValue: action,
+            operator: { type: 'string', operation: 'equals', name: 'filter.operator.equals' },
+          }],
+          combinator: 'and',
         },
-        options: {},
-      },
-      id: 'dash-switch-001', name: '🔀 Route by Action', type: 'n8n-nodes-base.switch',
-      typeVersion: 3, position: [680, 500],
-    },
+        renameOutput: true,
+        outputKey,
+      });
+      return {
+        parameters: {
+          mode: 'rules',
+          rules: {
+            values: [
+              mkRule('error',     '⚠️ Error'),
+              mkRule('start',     '🐛 Start Bug Fix'),
+              mkRule('status',    '📊 Check Status'),
+              mkRule('approve',   '✅ Approve Run'),
+              mkRule('reject',    '❌ Reject Run'),
+              mkRule('create-pr', '📦 Create GitHub PR'),
+              mkRule('cancel',    '🚫 Cancel Run'),
+            ],
+          },
+          options: { fallbackOutput: 'none' },
+          looseTypeValidation: true,
+        },
+        id: 'dash-switch-001', name: '🔀 Route by Action', type: 'n8n-nodes-base.switch',
+        typeVersion: 3.2, position: [680, 500],
+      };
+    })(),
     // Action nodes — one per branch
     {
       parameters: { mode: 'runOnceForAllItems', jsCode: actionErrorCode },
