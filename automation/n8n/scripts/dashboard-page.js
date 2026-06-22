@@ -278,10 +278,10 @@ function switchTab(name) {
 
 // ── templates ────────────────────────────────────────────
 const TEMPLATES = {
-  ui: '[BUG] UI element shows wrong data or is missing\ncomponent: frontend\narea: healthinsuranceclaim_frontend/src/features/<domain>/components/<Component>.tsx\nseverity: medium\n\nOn the <page> screen, the <element> shows <incorrect value> instead of <expected value>.',
-  filter: '[BUG] API endpoint returns items that should be excluded\ncomponent: backend\narea: HealthInsuranceClaimAPI/HealthInsuranceClaimAPI/Services/<Service>.cs\nseverity: high\n\nThe <endpoint> returns <items> that should be filtered out based on <condition>.',
-  cache: '[BUG] Data does not update after action — stale cache\ncomponent: frontend\narea: healthinsuranceclaim_frontend/src/features/<domain>/services/<domain>Api.ts\nseverity: medium\n\nAfter <action>, the <data> on screen still shows the old value. Refreshing the page shows the correct value.',
-  purchased: '[BUG] Purchased policy still shown on Browse Policies\ncomponent: frontend\narea: healthinsuranceclaim_frontend/src/features/customer/components/BrowsePolicies.tsx\nseverity: high\n\nAfter a customer purchases a policy, it still appears in the Browse Policies list with an active "Buy" button. The customer should not be able to purchase the same policy twice.\n\nSteps to reproduce:\n1. Log in as customer\n2. Go to Browse Policies\n3. Purchase a policy\n4. Stay on or return to Browse Policies\n\nExpected: purchased policy is hidden or shown as "Owned"\nActual: policy still appears with active Buy button',
+  ui: '[BUG] UI element shows wrong data or is missing\\ncomponent: frontend\\narea: healthinsuranceclaim_frontend/src/features/<domain>/components/<Component>.tsx\\nseverity: medium\\n\\nOn the <page> screen, the <element> shows <incorrect value> instead of <expected value>.',
+  filter: '[BUG] API endpoint returns items that should be excluded\\ncomponent: backend\\narea: HealthInsuranceClaimAPI/HealthInsuranceClaimAPI/Services/<Service>.cs\\nseverity: high\\n\\nThe <endpoint> returns <items> that should be filtered out based on <condition>.',
+  cache: '[BUG] Data does not update after action — stale cache\\ncomponent: frontend\\narea: healthinsuranceclaim_frontend/src/features/<domain>/services/<domain>Api.ts\\nseverity: medium\\n\\nAfter <action>, the <data> on screen still shows the old value. Refreshing the page shows the correct value.',
+  purchased: '[BUG] Purchased policy still shown on Browse Policies\\ncomponent: frontend\\narea: healthinsuranceclaim_frontend/src/features/customer/components/BrowsePolicies.tsx\\nseverity: high\\n\\nAfter a customer purchases a policy, it still appears in the Browse Policies list with an active "Buy" button. The customer should not be able to purchase the same policy twice.\\n\\nSteps to reproduce:\\n1. Log in as customer\\n2. Go to Browse Policies\\n3. Purchase a policy\\n4. Stay on or return to Browse Policies\\n\\nExpected: purchased policy is hidden or shown as \\"Owned\\"\\nActual: policy still appears with active Buy button',
 };
 document.querySelectorAll('.tpl-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -305,7 +305,7 @@ $('submitBug').addEventListener('click', async () => {
     showResult('reportResult', res.response || res.output || JSON.stringify(res,null,2), isErr);
 
     if (res.runId && !isErr) {
-      const titleMatch = text.match(/^\[BUG\]\s*(.+?)(?:\n|$)/i);
+      const titleMatch = text.match(/^\[BUG\]\s*(.+?)(?:\\n|$)/i);
       addToHistory(res.runId, res.status || 'queued', titleMatch?.[1] || text.slice(0,60));
       // Auto-switch to Track tab and begin 10 s polling
       $('trackId').value = res.runId;
@@ -320,7 +320,7 @@ $('submitBug').addEventListener('click', async () => {
     }
   } catch(e) {
     const hint = e.message.includes('fetch') || e.message.includes('Failed')
-      ? '\n\nCheck:\n• Is the "Bug Fix Dashboard" workflow active in n8n?\n• URL: ' + ACTION_URL
+      ? '\\n\\nCheck:\\n• Is the "Bug Fix Dashboard" workflow active in n8n?\\n• URL: ' + ACTION_URL
       : '';
     showResult('reportResult', 'Error: ' + e.message + hint, true);
   } finally {
