@@ -132,11 +132,37 @@ try {
   const started = await apiRequest.call(this, 'POST', '/runs/start', intake);
   console.log(`[start] run created: ${started.runId}`);
 
-  const run = await pollUntilReady.call(this, started.runId);
-  const summary = formatRunResult(run);
+  // Return immediately — do NOT poll here. The browser dashboard polls status
+  // every 10 s via the "status" action. Polling inside this node would block
+  // the browser fetch for up to 15 minutes, making the UI appear frozen.
+  const lines = [
+    `✅ Bug fix run started`,
+    `Run ID: ${started.runId}`,
+    `Branch: ${started.branchName ?? 'pending'}`,
+    `Status: ${started.status}`,
+    '',
+    '🔍 Switching to Track Run tab — checking status every 10 s.',
+    'The Cursor agent is now working on your repo (may take 5–15 min).',
+    'Watch n8n Executions for live progress.',
+  ].join('\n');
 
-  return [{ json: { response: summary, output: summary, runId: run.runId, status: run.status } }];
+  return [{ json: {
+    response: lines,
+    output: lines,
+    runId: started.runId,
+    status: started.status,
+    branchName: started.branchName ?? null,
+    _autoTrack: true,
+  } }];
 } catch (err) {
-  const msg = `Failed to start bug fix:\n${err.message ?? err}`;
+  const body = err.response?.body ?? err.response?.data;
+  const detail = body?.error?.message ?? err.message ?? 'Unknown error';
+  const hint =
+    detail.includes('REPO_LOCK_HELD')
+      ? '\n\n→ Another run is active. Check its status in the Track tab and Approve or Reject it first.'
+      : detail.includes('ECONNREFUSED') || detail.includes('fetch')
+      ? '\n\n→ Orchestrator is not running. Start it: cd automation/orchestrator && npm run dev'
+      : '';
+  const msg = `Failed to start bug fix:\n${detail}${hint}`;
   return [{ json: { response: msg, output: msg } }];
 }

@@ -296,22 +296,31 @@ $('submitBug').addEventListener('click', async () => {
   if (!text) { showResult('reportResult','Bug report text is required.',true); return; }
   const btn = $('submitBug');
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span> Starting… (up to 15 min — check n8n Executions)';
+  btn.innerHTML = '<span class="spinner"></span> Submitting…';
   showResult('reportResult','');
   try {
     const res = await callAction({ action:'start', message:text });
-    if (res.runId) {
+
+    const isErr = !res.runId || res.status==='failed' || (res.response||'').toLowerCase().includes('error') || (res.response||'').toLowerCase().includes('failed');
+    showResult('reportResult', res.response || res.output || JSON.stringify(res,null,2), isErr);
+
+    if (res.runId && !isErr) {
       const titleMatch = text.match(/^\[BUG\]\s*(.+?)(?:\n|$)/i);
       addToHistory(res.runId, res.status || 'queued', titleMatch?.[1] || text.slice(0,60));
-    }
-    showResult('reportResult', res.response || res.output || JSON.stringify(res,null,2), res.status==='failed'||(res.response||'').includes('Error'));
-    if (res.runId) {
+      // Auto-switch to Track tab and begin 10 s polling
       $('trackId').value = res.runId;
       $('reviewId').value = res.runId;
+      setTimeout(() => {
+        switchTab('track');
+        doCheckStatus(res.runId);
+        // Start auto-refresh for this run
+        $('autoRefresh').checked = true;
+        $('autoRefresh').dispatchEvent(new Event('change'));
+      }, 1200);
     }
   } catch(e) {
     const hint = e.message.includes('fetch') || e.message.includes('Failed')
-      ? '\n\nCheck: is the "Bug Fix Dashboard" workflow active in n8n?\nURL tried: ' + ACTION_URL
+      ? '\n\nCheck:\n• Is the "Bug Fix Dashboard" workflow active in n8n?\n• URL: ' + ACTION_URL
       : '';
     showResult('reportResult', 'Error: ' + e.message + hint, true);
   } finally {
@@ -379,17 +388,24 @@ let countdown = 30;
 async function doCheckStatus(runId) {
   if (!runId) return;
   $('checkBtn').disabled = true;
-  $('statusCard').innerHTML = '<div class="card"><span class="spinner"></span> Checking…</div>';
   try {
     const res = await callAction({ action:'status', runId });
     if (res.run) {
       $('statusCard').innerHTML = renderStatusCard(res.run);
       addToHistory(res.run.runId, res.run.status, res.run.intake?.bug?.title||runId);
+      // If run finished (terminal or awaiting_approval), stop auto-refresh
+      const TERMINAL = new Set(['awaiting_approval','approved','rejected','pr_created','failed']);
+      if (TERMINAL.has(res.run.status)) {
+        $('autoRefresh').checked = false;
+        $('autoRefresh').dispatchEvent(new Event('change'));
+        $('refreshCountdown').textContent = '';
+      }
     } else {
       $('statusCard').innerHTML = '<div class="result-box'+(( res.response||'').includes('Error')||res.status==='failed'?' err':'')+'">'+escHtml(res.response||JSON.stringify(res,null,2))+'</div>';
     }
   } catch(e) {
-    $('statusCard').innerHTML = '<div class="result-box err">Network error: '+escHtml(e.message)+'</div>';
+    $('statusCard').innerHTML = '<div class="result-box err">Network error: '+escHtml(e.message)+
+      '<br><small>Is the "Bug Fix Dashboard" workflow active in n8n?</small></div>';
   } finally {
     $('checkBtn').disabled=false;
   }
@@ -404,14 +420,15 @@ $('checkBtn').addEventListener('click', () => {
 
 $('autoRefresh').addEventListener('change', () => {
   clearInterval(autoRefreshTimer);
+  autoRefreshTimer = null;
   $('refreshCountdown').textContent='';
   if ($('autoRefresh').checked) {
-    countdown=30;
+    countdown=10;
     autoRefreshTimer = setInterval(() => {
       countdown--;
-      $('refreshCountdown').textContent = 'Next refresh in '+countdown+'s';
+      $('refreshCountdown').textContent = 'Next check in '+countdown+'s';
       if (countdown<=0) {
-        countdown=30;
+        countdown=10;
         const runId=$('trackId').value.trim();
         if (runId) doCheckStatus(runId);
       }
