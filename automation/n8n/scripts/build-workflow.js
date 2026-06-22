@@ -410,3 +410,9 @@ console.log('Wrote bugfix-webhook-demo.json');
 console.log('Wrote bugfix-chat-demo.json (n8n 1.82 — no Respond to Chat node)');
 console.log('Wrote bugfix-control-panel.json (legacy single-node panel)');
 console.log('Wrote bugfix-dashboard.json ✨ (new: Switch routing + tabbed HTML dashboard)');
+
+// Validate the served dashboard's <script> body parses cleanly in a browser.
+import('./validate-dashboard.js').catch(err => {
+  console.error('Dashboard validation failed:', err.message);
+  process.exit(1);
+});

@@ -339,7 +339,7 @@ function renderStatusCard(run) {
   let html = '<div class="card">';
   html += '<div class="status-row">' + badge(run.status);
   html += '<strong>' + escHtml(g.branchName||'n/a') + '</strong>';
-  html += '<span class="meta">' + escHtml(run.runId) + ' <button class="copy-btn" title="Copy run ID" onclick="navigator.clipboard.writeText(\''+escHtml(run.runId)+'\')">📋</button></span>';
+  html += '<span class="meta">' + escHtml(run.runId) + ' <button class="copy-btn" title="Copy run ID" onclick="navigator.clipboard.writeText(\\''+escHtml(run.runId)+'\\')">📋</button></span>';
   html += '</div>';
 
   if (a.bugSummary) {
@@ -373,7 +373,7 @@ function renderStatusCard(run) {
 
   if (run.status==='awaiting_approval') {
     html += '<div style="margin-top:.85rem;padding:.6rem;background:var(--badge-p);border-radius:6px;font-size:.83rem;color:var(--badge-pt)">';
-    html += '⏳ Ready for your review — <button onclick="switchTab(\'review\');$(\'reviewId\').value=\''+escHtml(run.runId)+'\'" style="border:none;background:none;color:var(--accent);cursor:pointer;font-size:.83rem;text-decoration:underline">Go to Review &amp; Approve →</button>';
+    html += '⏳ Ready for your review — <button onclick="switchTab(\\'review\\');$(\\'reviewId\\').value=\\''+escHtml(run.runId)+'\\'" style="border:none;background:none;color:var(--accent);cursor:pointer;font-size:.83rem;text-decoration:underline">Go to Review &amp; Approve →</button>';
     html += '</div>';
   }
 
