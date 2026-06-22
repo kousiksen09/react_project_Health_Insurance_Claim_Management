@@ -123,14 +123,30 @@ async function pollRun(runId) {
     'pr_created',
     'failed',
   ]);
-  for (let attempt = 0; attempt < 90; attempt++) {
+  // 180 attempts × 5 s = 15 minutes — enough for a full Cursor agent run
+  const MAX_ATTEMPTS = 180;
+  const POLL_MS = 5000;
+  const STATUS_LABELS = {
+    queued: 'Queued...',
+    analyzing: 'Analyzing repo...',
+    patch_created: 'Patch applied, running validation...',
+    validating: 'Running build & tests...',
+  };
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const run = await apiRequest.call(this, 'GET', `/runs/${runId}`);
     if (terminal.has(run.status)) {
       return run;
     }
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+    if (attempt % 6 === 0) {
+      const label = STATUS_LABELS[run.status] ?? `Status: ${run.status}`;
+      console.log(`[poll ${runId}] attempt ${attempt + 1}/${MAX_ATTEMPTS} — ${label}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
   }
-  throw new Error(`Timed out waiting for run ${runId}`);
+  const minutesWaited = Math.round((MAX_ATTEMPTS * POLL_MS) / 60000);
+  throw new Error(
+    `Timed out after ${minutesWaited} min waiting for run ${runId}.\nTry: status ${runId}`,
+  );
 }
 
 function parseBugIntake(text) {
@@ -230,16 +246,22 @@ try {
   if (!chatInput) {
     const keys = Object.keys(raw).join(', ') || '(empty)';
     return reply([
-      'No chat message text found.',
-      `Fields received: ${keys}`,
+      'No chat message found. Fields received: ' + keys,
       '',
-      'Send a bug report like:',
-      '[BUG] Notification label shows ClaimSubmitted',
+      'Commands:',
+      '  [BUG] <title>          — start a new bug-fix run',
+      '  status <runId>         — check run status',
+      '  approve <runId>        — approve run for PR creation',
+      '  reject <runId> [reason]— reject run',
+      '  create-pr <runId>      — create GitHub PR (requires GITHUB_TOKEN)',
+      '  cancel <runId>         — cancel in-flight run',
       '',
+      'Example bug report:',
+      '[BUG] Purchased policy still shown on Browse Policies',
       'component: frontend',
-      'area: healthinsuranceclaim_frontend/src/features/notifications/components/NotificationsPage.tsx',
+      'area: healthinsuranceclaim_frontend/src/features/customer/components/BrowsePolicies.tsx',
       '',
-      'On /notifications the chip shows ClaimSubmitted instead of Claim Submitted.',
+      'After purchasing a policy it still appears on the browse list with an active Buy button.',
     ].join('\n'));
   }
 

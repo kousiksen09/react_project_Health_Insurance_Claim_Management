@@ -209,6 +209,13 @@ export interface ApprovalReviewSummary {
     canApprove: boolean;
     canReject: boolean;
     checklist: string[];
+    decision: {
+      status: 'approved' | 'rejected';
+      by: string | null;
+      at: string | null;
+      comment: string | null;
+      reason: string | null;
+    } | null;
   };
   email: {
     subject: string;

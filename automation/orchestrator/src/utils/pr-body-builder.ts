@@ -1,4 +1,5 @@
 import type { RunResult } from '../types/contracts.js';
+import { config } from '../config.js';
 
 export interface PullRequestBody {
   title: string;
@@ -76,7 +77,7 @@ export function buildPullRequestContent(run: RunResult, overrides?: { title?: st
     '',
     `## Branch`,
     `- **Feature branch:** \`${git?.branchName ?? 'n/a'}\``,
-    `- **Base branch:** \`${git?.baseBranch ?? 'main'}\``,
+    `- **Base branch:** \`${git?.baseBranch ?? config.defaultBaseBranch}\``,
     `- **Run ID:** \`${runId}\``,
     '',
     `## Files changed (${changedFiles.length})`,

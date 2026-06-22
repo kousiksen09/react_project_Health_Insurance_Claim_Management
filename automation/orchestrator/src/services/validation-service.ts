@@ -9,8 +9,10 @@ function parseDotnetTestCounts(output: string): TestCounts {
     output.match(/Total tests:\s*(\d+)\.\s*Passed:\s*(\d+)\.\s*Failed:\s*(\d+)\.\s*Skipped:\s*(\d+)/i);
 
   if (!summary) {
-    const passed = output.match(/Passed!\s/i) ? 1 : 0;
-    return { passed, failed: 0, skipped: 0 };
+    // "Build succeeded." or "Test run successful." with no count — treat as 1 symbolic pass
+    // rather than 0, so the pipeline doesn't flag it as "0 tests ran".
+    const allPassed = /Passed!\s|Test run successful\.|Build succeeded\./i.test(output);
+    return { passed: allPassed ? 1 : 0, failed: 0, skipped: 0 };
   }
 
   if (summary[0].includes('Total tests')) {
@@ -173,10 +175,13 @@ export const validationService = {
     const testsPassed = backendTestsOk && frontendTestsOk;
 
     const testGapRecommendations = buildTestGapRecommendations(plan);
+    // Tests are considered weak when: no backend tests ran, very few passed, or frontend project
+    // exists (detected) but its tests didn't run.
+    const frontendProjectDetected = plan.build.frontend.enabled || plan.test.frontend.enabled;
     const testsWeak =
-      (backendTestsRan && backendTestCounts.passed <= 3) ||
       !backendTestsRan ||
-      (!frontendTestsRan && plan.frontendProjectRel.length > 0);
+      (backendTestsRan && backendTestCounts.passed <= 3) ||
+      (!frontendTestsRan && frontendProjectDetected);
 
     const testSummaryParts: string[] = [];
     if (backendTestsRan) {

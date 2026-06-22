@@ -82,6 +82,15 @@ export function buildApprovalReviewSummary(run: RunResult): ApprovalReviewSummar
     `  POST /runs/${run.runId}/approve  { "approvedBy": "reviewer@example.com", "createPr": false }`,
     `  POST /runs/${run.runId}/reject   { "rejectedBy": "reviewer@example.com", "reason": "..." }`,
     '',
+    run.approval.status !== 'pending'
+      ? [
+          `Decision: ${run.approval.status}`,
+          run.approval.approvedBy ? `  Approved by: ${run.approval.approvedBy}` : '',
+          run.approval.rejectedBy ? `  Rejected by: ${run.approval.rejectedBy}` : '',
+          run.approval.comment ? `  Comment: ${run.approval.comment}` : '',
+          run.approval.rejectedReason ? `  Reason: ${run.approval.rejectedReason}` : '',
+        ].filter(Boolean).join('\n')
+      : '',
     `Artifacts: ${run.artifactsPath}`,
   ]
     .filter(Boolean)
@@ -150,6 +159,15 @@ export function buildApprovalReviewSummary(run: RunResult): ApprovalReviewSummar
       canApprove: canApprove(run),
       canReject: canReject(run),
       checklist: buildChecklist(run),
+      decision: run.approval.status !== 'pending'
+        ? {
+            status: run.approval.status,
+            by: run.approval.approvedBy ?? run.approval.rejectedBy ?? null,
+            at: run.approval.approvedAt ?? run.approval.rejectedAt ?? null,
+            comment: run.approval.comment ?? null,
+            reason: run.approval.rejectedReason ?? null,
+          }
+        : null,
     },
     email: {
       subject,

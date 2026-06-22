@@ -3,33 +3,76 @@ import type { RepoInspection } from '../services/repo-inspection-service.js';
 
 export function buildBugFixPrompt(intake: BugIntakePayload, inspection: RepoInspection): string {
   const { bug } = intake;
+
   const steps =
-    bug.stepsToReproduce?.map((step, index) => `${index + 1}. ${step}`).join('\n') ?? '(not provided)';
+    bug.stepsToReproduce?.map((step, i) => `${i + 1}. ${step}`).join('\n') ?? '(not provided)';
 
-  const projectHints = [
-    inspection.projects.frontend ? `- Frontend: \`${inspection.projects.frontend}\`` : null,
-    inspection.projects.backend ? `- Backend: \`${inspection.projects.backend}\`` : null,
-  ]
-    .filter(Boolean)
-    .join('\n');
+  const projectHints: string[] = [];
+  if (inspection.projects.frontend) {
+    projectHints.push(`- **Frontend** (React + TypeScript + Vite): \`${inspection.projects.frontend}\``);
+    projectHints.push(`  - State management: Redux Toolkit (\`src/app/store.ts\`, \`src/features/\`)`);
+    projectHints.push(`  - API calls via RTK Query (\`src/features/<domain>/services/<domain>Api.ts\`)`);
+    projectHints.push(`  - Component pattern: \`src/features/<domain>/components/<Component>.tsx\``);
+  }
+  if (inspection.projects.backend) {
+    projectHints.push(`- **Backend** (ASP.NET Core 8 Web API, C#): \`${inspection.projects.backend}\``);
+    projectHints.push(`  - Services: \`<Name>Service.cs\`, Controllers: \`<Name>Controller.cs\``);
+    projectHints.push(`  - DTOs in \`DTOs/\`, models in \`Models/\`, EF Core via \`Data/AppDbContext.cs\``);
+  }
+  if (inspection.warnings.length > 0) {
+    projectHints.push('');
+    projectHints.push('**Repo warnings:**');
+    inspection.warnings.forEach((w) => projectHints.push(`- ${w}`));
+  }
 
-  return `# Bug fix task (orchestrator demo)
+  const affectedAreaSection = bug.affectedArea
+    ? `\n**Primary file(s) to investigate:** \`${bug.affectedArea}\``
+    : '';
 
-You are fixing a reported bug in a local checkout. Work incrementally and keep the change minimal.
+  const componentGuide = bug.component === 'frontend'
+    ? `\n**Frontend fix guidance:**
+- Check the relevant component under \`src/features/<domain>/components/\`
+- If data is stale, invalidate RTK Query cache tags (e.g. \`invalidatesTags\` in the mutation endpoint)
+- If a UI element shows when it shouldn't, add a filter in the component using data from the store
+- Prefer fixing the component over adding hacks; keep changes to ≤ 3 files`
+    : bug.component === 'backend'
+    ? `\n**Backend fix guidance:**
+- Check the service layer first (\`<Name>Service.cs\`), then the controller
+- Prefer adding a WHERE clause or .Where() LINQ filter over changing business logic broadly
+- Do not change migration files; do not add new DB columns`
+    : bug.component === 'fullstack'
+    ? `\n**Full-stack fix guidance:**
+- Start from the backend endpoint and trace to the frontend component
+- Fix the data source (service/query) first, then the display logic
+- Keep the API contract unchanged if possible (no breaking field renames)`
+    : '';
 
-## Repository
+  return `# Bug fix task — automated orchestrator
+
+You are a coding agent fixing a reported bug in a local git checkout.
+Work incrementally, make the smallest correct change, and stop when done.
+
+---
+
+## Repository layout
+
 - Root: \`${inspection.repoRoot}\`
-- Branch: stay on the current feature branch (do not switch branches)
+- Current branch: stay on the current feature branch (do **not** switch branches)
 - Base branch: \`${inspection.defaultBranch}\`
-${projectHints || '- (project layout not detected)'}
+
+${projectHints.join('\n') || '_(project layout not detected)_'}
+
+---
 
 ## Bug report
-**Title:** ${bug.title}
 
-**Component:** ${bug.component ?? 'unknown'}
-**Severity:** ${bug.severity ?? 'medium'}
-**Affected area:** ${bug.affectedArea ?? '(not specified)'}
-**Environment:** ${bug.environment ?? '(not specified)'}
+| Field | Value |
+|-------|-------|
+| **Title** | ${bug.title} |
+| **Component** | ${bug.component ?? 'unknown'} |
+| **Severity** | ${bug.severity ?? 'medium'} |
+| **Environment** | ${bug.environment ?? 'local-dev'} |
+${affectedAreaSection}
 
 **Description:**
 ${bug.description}
@@ -37,23 +80,33 @@ ${bug.description}
 **Steps to reproduce:**
 ${steps}
 
-**Expected:** ${bug.expectedBehavior ?? '(not provided)'}
-**Actual:** ${bug.actualBehavior ?? '(not provided)'}
+**Expected behaviour:** ${bug.expectedBehavior ?? '(not provided)'}
 
-## Constraints
-- Make the smallest correct fix; avoid unrelated refactors
-- Do not create commits unless needed to complete the fix
-- Do not push, open PRs, or run deploy commands
-- Prefer editing files under the affected area when possible
-- If blocked, explain what is missing instead of guessing
+**Actual behaviour:** ${bug.actualBehavior ?? '(not provided)'}
 
-## Required closing sections
-End your final message with exactly these markdown headings:
+${componentGuide}
+
+---
+
+## Hard constraints
+
+- Make the smallest correct fix — touch the minimum number of files
+- Do **not** create commits, push, open PRs, or run deploy commands
+- Do **not** change unrelated code, formatting, or imports
+- Do **not** add test files unless directly needed to reproduce the bug
+- If the fix requires understanding data flow, read the relevant files first
+- If blocked (missing context, ambiguous requirement), explain what is missing — do not guess
+
+---
+
+## Required output format
+
+End your **final message** with exactly these two markdown headings (nothing else after them):
 
 ## Summary
-(one short paragraph describing what you changed)
+(one concise paragraph — what you changed and why it fixes the bug)
 
 ## Root Cause
-(brief explanation of why the bug occurred)
+(brief explanation — why the bug existed before your change)
 `;
 }

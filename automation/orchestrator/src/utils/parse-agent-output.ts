@@ -1,14 +1,37 @@
+/**
+ * Extract structured sections from the Cursor agent's final assistant message.
+ *
+ * The agent is prompted to end with:
+ *   ## Summary
+ *   ## Root Cause
+ *
+ * But agents sometimes use ##, ###, or #### and may include extra spaces.
+ * Both patterns are handled here.
+ */
 export function parseStructuredSections(text: string): {
   summary?: string;
   rootCause?: string;
 } {
-  const summaryMatch = text.match(/##\s*Summary\s*\n+([\s\S]*?)(?=\n##\s+|\s*$)/i);
-  const rootCauseMatch = text.match(/##\s*Root\s*Cause\s*\n+([\s\S]*?)(?=\n##\s+|\s*$)/i);
+  // Match ## through #### headings with optional whitespace, case-insensitive
+  const headingBoundary = /\n#{2,4}\s+/;
 
-  return {
-    summary: summaryMatch?.[1]?.trim(),
-    rootCause: rootCauseMatch?.[1]?.trim(),
-  };
+  const summaryMatch = text.match(/#{2,4}\s*Summary\s*\n+([\s\S]*?)(?=\n#{1,4}\s+|\s*$)/i);
+  const rootCauseMatch = text.match(/#{2,4}\s*Root\s*Cause\s*\n+([\s\S]*?)(?=\n#{1,4}\s+|\s*$)/i);
+
+  // Fallback: look for bold labels like "**Summary:**" in case agent skips headings
+  const boldSummaryMatch = !summaryMatch
+    ? text.match(/\*\*Summary[:\s]*\*\*\s*\n?([\s\S]*?)(?=\*\*Root Cause|\n#{1,4}\s+|\s*$)/i)
+    : null;
+  const boldRootCauseMatch = !rootCauseMatch
+    ? text.match(/\*\*Root Cause[:\s]*\*\*\s*\n?([\s\S]*?)(?=\n#{1,4}\s+|\s*$)/i)
+    : null;
+
+  void headingBoundary;
+
+  const summary = (summaryMatch?.[1] ?? boldSummaryMatch?.[1])?.trim();
+  const rootCause = (rootCauseMatch?.[1] ?? boldRootCauseMatch?.[1])?.trim();
+
+  return { summary, rootCause };
 }
 
 export function extractAssistantText(content: unknown): string {

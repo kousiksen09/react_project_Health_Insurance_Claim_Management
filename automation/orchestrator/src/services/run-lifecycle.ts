@@ -62,7 +62,7 @@ export class RunLifecycleService {
         throw new Error(branchResult.error ?? 'Failed to create feature branch');
       }
 
-      runStore.update(runId, {
+      const runAfterBranch = runStore.update(runId, {
         git: {
           ...run.git!,
           branchName: branchResult.branchName,
@@ -72,7 +72,7 @@ export class RunLifecycleService {
       });
 
       await this.transition(runId, 'analyzing');
-      const analysisResult = await analysisService.analyze(run.intake);
+      const analysisResult = await analysisService.analyze(runAfterBranch.intake);
       await artifactService.appendLog(runId, { step: 'analysis.analyze', ...analysisResult });
       await artifactService.writeJsonArtifact(runId, 'repo-inspection.json', {
         warnings: analysisResult.repoWarnings,

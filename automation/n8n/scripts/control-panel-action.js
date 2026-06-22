@@ -96,12 +96,29 @@ function formatRunSummary(run) {
 
 async function pollRun(runId) {
   const terminal = new Set(['awaiting_approval', 'approved', 'rejected', 'pr_created', 'failed']);
-  for (let i = 0; i < 90; i++) {
+  // 180 attempts × 5 s = 15 minutes — enough for a full Cursor agent run
+  const MAX_ATTEMPTS = 180;
+  const POLL_MS = 5000;
+  const STATUS_LABELS = {
+    queued: 'Queued...',
+    analyzing: 'Analyzing repo...',
+    patch_created: 'Patch applied, running validation...',
+    validating: 'Running build & tests...',
+  };
+  for (let i = 0; i < MAX_ATTEMPTS; i++) {
     const run = await apiRequest.call(this, 'GET', `/runs/${runId}`);
     if (terminal.has(run.status)) return run;
-    await new Promise((r) => setTimeout(r, 5000));
+    if (i % 6 === 0) {
+      // log progress every ~30 s (visible in n8n Executions)
+      const label = STATUS_LABELS[run.status] ?? `Status: ${run.status}`;
+      console.log(`[poll ${runId}] attempt ${i + 1}/${MAX_ATTEMPTS} — ${label}`);
+    }
+    await new Promise((r) => setTimeout(r, POLL_MS));
   }
-  throw new Error(`Timed out waiting for ${runId}. Use Check status later.`);
+  const minutesWaited = Math.round((MAX_ATTEMPTS * POLL_MS) / 60000);
+  throw new Error(
+    `Timed out after ${minutesWaited} min waiting for run ${runId}.\nUse "Check status" action with Run ID to check later.`,
+  );
 }
 
 function parsePanelRequest(raw) {

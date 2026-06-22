@@ -14,24 +14,25 @@ export interface ExecResult {
   durationMs: number;
   stdout: string;
   stderr: string;
+  timedOut?: boolean;
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 
-export async function execCommand(
+function spawnProcess(
   command: string,
   args: string[],
-  options: ExecOptions,
+  options: ExecOptions & { shell?: boolean },
 ): Promise<ExecResult> {
   const start = Date.now();
-  const fullCommand = [command, ...args].join(' ');
+  const fullCommand = args.length > 0 ? [command, ...args].join(' ') : command;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   return new Promise((resolve) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: { ...process.env, ...options.env },
-      shell: false,
+      shell: options.shell ?? false,
       windowsHide: true,
     });
 
@@ -39,9 +40,31 @@ export async function execCommand(
     let stderr = '';
     let settled = false;
 
+    const finish = (exitCode: number, timedOut = false): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({
+        command: fullCommand,
+        cwd: options.cwd,
+        exitCode,
+        durationMs: Date.now() - start,
+        stdout,
+        stderr: timedOut
+          ? `${stderr}\n[TIMEOUT] Command killed after ${timeoutMs}ms`.trim()
+          : stderr,
+        timedOut,
+      });
+    };
+
+    // On Windows, SIGTERM is ignored. child.kill() without a signal sends SIGTERM on
+    // Unix and calls TerminateProcess() on Windows — the only cross-platform option.
     const timer = setTimeout(() => {
       if (!settled) {
-        child.kill('SIGTERM');
+        child.kill();
+        // finish() is called here so the timeout exit code (124) is set immediately;
+        // the subsequent 'close' event is a no-op because settled=true.
+        finish(124, true);
       }
     }, timeoutMs);
 
@@ -52,98 +75,29 @@ export async function execCommand(
       stderr += chunk.toString();
     });
 
-    child.on('close', (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({
-        command: fullCommand,
-        cwd: options.cwd,
-        exitCode: code ?? 1,
-        durationMs: Date.now() - start,
-        stdout,
-        stderr,
-      });
-    });
-
+    child.on('close', (code) => finish(code ?? 1));
     child.on('error', (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({
-        command: fullCommand,
-        cwd: options.cwd,
-        exitCode: 1,
-        durationMs: Date.now() - start,
-        stdout,
-        stderr: `${stderr}\n${error.message}`.trim(),
-      });
+      stderr += `\n${error.message}`.trimStart();
+      finish(1);
     });
   });
+}
+
+export async function execCommand(
+  command: string,
+  args: string[],
+  options: ExecOptions,
+): Promise<ExecResult> {
+  return spawnProcess(command, args, { ...options, shell: false });
+}
+
+export async function execShell(commandLine: string, options: ExecOptions): Promise<ExecResult> {
+  return spawnProcess(commandLine, [], { ...options, shell: true });
 }
 
 function tail(text: string, max = 2000): string {
   if (text.length <= max) return text;
   return text.slice(-max);
-}
-
-export async function execShell(commandLine: string, options: ExecOptions): Promise<ExecResult> {
-  const start = Date.now();
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-
-  return new Promise((resolve) => {
-    const child = spawn(commandLine, {
-      cwd: options.cwd,
-      env: { ...process.env, ...options.env },
-      shell: true,
-      windowsHide: true,
-    });
-
-    let stdout = '';
-    let stderr = '';
-    let settled = false;
-
-    const timer = setTimeout(() => {
-      if (!settled) {
-        child.kill('SIGTERM');
-      }
-    }, timeoutMs);
-
-    child.stdout?.on('data', (chunk: Buffer | string) => {
-      stdout += chunk.toString();
-    });
-    child.stderr?.on('data', (chunk: Buffer | string) => {
-      stderr += chunk.toString();
-    });
-
-    child.on('close', (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({
-        command: commandLine,
-        cwd: options.cwd,
-        exitCode: code ?? 1,
-        durationMs: Date.now() - start,
-        stdout,
-        stderr,
-      });
-    });
-
-    child.on('error', (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({
-        command: commandLine,
-        cwd: options.cwd,
-        exitCode: 1,
-        durationMs: Date.now() - start,
-        stdout,
-        stderr: `${stderr}\n${error.message}`.trim(),
-      });
-    });
-  });
 }
 
 export function countBuildErrors(output: string): number {
@@ -161,6 +115,6 @@ export function toCommandResult(name: string, result: ExecResult, note?: string)
     durationMs: result.durationMs,
     stdoutTail: tail(result.stdout),
     stderrTail: tail(result.stderr),
-    note,
+    note: result.timedOut ? `[TIMEOUT] ${note ?? ''}`.trim() : note,
   };
 }

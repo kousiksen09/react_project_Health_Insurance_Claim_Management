@@ -4,6 +4,9 @@ import { config } from '../config.js';
 import type { BugIntakePayload, RunResult, RunStatus } from '../types/contracts.js';
 import { buildBranchName, createRunId, relativeArtifactsPath } from '../utils/ids.js';
 
+/** Statuses where the pipeline is actively running (not waiting for human input). */
+const IN_FLIGHT_STATUSES = new Set<RunStatus>(['queued', 'analyzing', 'patch_created', 'validating']);
+
 interface RunIndex {
   activeRunId: string | null;
   messageIds: Record<string, string>;
@@ -48,6 +51,30 @@ class RunStore {
       }
     } catch {
       await this.persistIndex();
+    }
+
+    // If the process crashed while a pipeline step was running, that run is stuck
+    // forever (lock held, pipeline dead). Recover it to 'failed' so new runs can start.
+    if (this.activeRunId) {
+      const activeRun = this.runs.get(this.activeRunId);
+      if (activeRun && IN_FLIGHT_STATUSES.has(activeRun.status)) {
+        console.warn(
+          `[run-store] run ${activeRun.runId} was in-flight (${activeRun.status}) at shutdown — marking failed`,
+        );
+        const recovered: RunResult = {
+          ...activeRun,
+          status: 'failed',
+          updatedAt: new Date().toISOString(),
+          error: {
+            code: 'CRASHED_ON_RESTART',
+            message: `Pipeline was in status '${activeRun.status}' when orchestrator restarted. Submit again.`,
+          },
+        };
+        this.runs.set(this.activeRunId, recovered);
+        this.activeRunId = null;
+        await this.persistRun(recovered);
+        await this.persistIndex();
+      }
     }
 
     this.initialized = true;

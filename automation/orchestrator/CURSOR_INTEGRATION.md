@@ -15,12 +15,14 @@ When `POST /runs/start` is called, the pipeline:
 
 ## Prerequisites
 
-| Requirement | Notes |
-|-------------|--------|
-| Node.js 22+ | Required by `@cursor/sdk` |
-| `CURSOR_API_KEY` | From Cursor account settings |
-| Git | On PATH; repo must be a git checkout |
+
+| Requirement          | Notes                                   |
+| -------------------- | --------------------------------------- |
+| Node.js 22+          | Required by `@cursor/sdk`               |
+| `CURSOR_API_KEY`     | From Cursor account settings            |
+| Git                  | On PATH; repo must be a git checkout    |
 | Clean tree (default) | Set `ALLOW_DIRTY_REPO=true` to override |
+
 
 ## Environment variables
 
@@ -35,24 +37,28 @@ DEFAULT_BASE_BRANCH=main
 
 ### Dry-run modes
 
-| Condition | Behavior |
-|-----------|----------|
+
+| Condition              | Behavior                                   |
+| ---------------------- | ------------------------------------------ |
 | `CURSOR_API_KEY` unset | Dry-run: prompt + artifacts only, no agent |
-| `CURSOR_DRY_RUN=true` | Same, even if key is set |
-| Key set + dry-run off | Full local agent against `REPO_ROOT` |
+| `CURSOR_DRY_RUN=true`  | Same, even if key is set                   |
+| Key set + dry-run off  | Full local agent against `REPO_ROOT`       |
+
 
 Dry-run is **honest**: status reaches `awaiting_approval` but `changedFiles` is empty and `implementationNote` explains why.
 
 ## Pipeline services
 
-| Step | Service | Output |
-|------|---------|--------|
-| Branch | `git-service.ts` | Feature branch on local repo |
-| Inspect | `repo-inspection-service.ts` | `repo-inspection.json` (via run log) |
-| Prompt | `prompt-builder.ts` | `agent-prompt.md` |
-| Agent | `agent-service.ts` | `agent-transcript.jsonl`, `agent-transcript.md` |
-| Analysis | `analysis-service.ts` | `bug-summary.md`, `root-cause.md` |
-| Git diff | `git-service.ts` | `changed-files.json` |
+
+| Step     | Service                      | Output                                          |
+| -------- | ---------------------------- | ----------------------------------------------- |
+| Branch   | `git-service.ts`             | Feature branch on local repo                    |
+| Inspect  | `repo-inspection-service.ts` | `repo-inspection.json` (via run log)            |
+| Prompt   | `prompt-builder.ts`          | `agent-prompt.md`                               |
+| Agent    | `agent-service.ts`           | `agent-transcript.jsonl`, `agent-transcript.md` |
+| Analysis | `analysis-service.ts`        | `bug-summary.md`, `root-cause.md`               |
+| Git diff | `git-service.ts`             | `changed-files.json`                            |
+
 
 ## Structured prompt
 
@@ -152,17 +158,20 @@ healthinsuranceclaim_frontend/src/features/notifications/components/Notification
 
 ## Troubleshooting
 
-| Issue | Check |
-|-------|--------|
-| `DIRTY_WORKING_TREE` | Commit/stash or `ALLOW_DIRTY_REPO=true` |
-| `REPO_LOCK_HELD` | Wait for run or `POST /runs/:id/cancel` |
+
+| Issue                                            | Check                                                                     |
+| ------------------------------------------------ | ------------------------------------------------------------------------- |
+| `DIRTY_WORKING_TREE`                             | Commit/stash or `ALLOW_DIRTY_REPO=true`                                   |
+| `REPO_LOCK_HELD`                                 | Wait for run or `POST /runs/:id/cancel`                                   |
 | `Cannot find package '@connectrpc/connect-node'` | Run `npm install` in `automation/orchestrator` (deps now in package.json) |
-| Agent error | `agent-transcript.md`, `run-log.jsonl` |
-| No changed files (dry-run) | Set `CURSOR_API_KEY`, `CURSOR_DRY_RUN=false` |
-| Branch checkout fails | Set `DEFAULT_BASE_BRANCH=dev` or `master` (this repo has no `main`) |
+| Agent error                                      | `agent-transcript.md`, `run-log.jsonl`                                    |
+| No changed files (dry-run)                       | Set `CURSOR_API_KEY`, `CURSOR_DRY_RUN=false`                              |
+| Branch checkout fails                            | Set `DEFAULT_BASE_BRANCH=dev` or `master` (this repo has no `main`)       |
+
 
 ## Related docs
 
 - `automation/BUG_AUTOMATION_CONTRACTS.md` — API contract
 - `automation/REPO_RUNBOOK.md` — build commands (Phase 5)
 - `automation/orchestrator/README.md` — server setup
+
