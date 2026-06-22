@@ -1,6 +1,6 @@
 import type { CommandResult, TestCounts, TestGapRecommendation, ValidationResult } from '../types/contracts.js';
 import { config } from '../config.js';
-import { countBuildErrors, execShell, toCommandResult } from '../utils/exec.js';
+import { countBuildErrors, execShell, isFileLockBuildFailure, toCommandResult } from '../utils/exec.js';
 import { detectValidationPlan, type ValidationCommandPlan, type ValidationStepSpec } from './validation-config.js';
 
 function parseDotnetTestCounts(output: string): TestCounts {
@@ -204,9 +204,16 @@ export const validationService = {
 
     const failureReasons: string[] = [];
     if (!backendBuildOk) {
-      failureReasons.push(
-        `Backend build failed (exit ${backendBuild.command.exitCode}, ${backendBuild.errorCount ?? 0} compile errors)`,
-      );
+      const backendOut = `${backendBuild.output}`;
+      if (isFileLockBuildFailure(backendOut)) {
+        failureReasons.push(
+          'Backend build failed: HealthInsuranceClaimAPI.exe was locked (API already running). Stop the API process and rebuild — not a compile error.',
+        );
+      } else {
+        failureReasons.push(
+          `Backend build failed (exit ${backendBuild.command.exitCode}, ${backendBuild.errorCount ?? 0} compile errors)`,
+        );
+      }
     }
     if (!frontendBuildOk) {
       failureReasons.push(

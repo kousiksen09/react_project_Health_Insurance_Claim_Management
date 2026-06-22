@@ -10,7 +10,7 @@
  *   { action, runId, message, reporterEmail, createPr, error? }
  */
 
-const ALLOWED_ACTIONS = new Set(['start', 'status', 'approve', 'reject', 'create-pr', 'cancel']);
+const ALLOWED_ACTIONS = new Set(['start', 'status', 'approve', 'reject', 'create-pr', 'cancel', 'health']);
 const ALLOWED_COMPONENTS = new Set(['frontend', 'backend', 'fullstack', 'unknown']);
 const ALLOWED_SEVERITIES = new Set(['low', 'medium', 'high', 'critical']);
 

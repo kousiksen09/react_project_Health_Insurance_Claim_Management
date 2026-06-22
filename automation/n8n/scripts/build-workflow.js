@@ -30,6 +30,7 @@ const actionRejectCode = fs.readFileSync(path.join(root, 'scripts/action-reject.
 const actionCreatePrCode = fs.readFileSync(path.join(root, 'scripts/action-create-pr.js'), 'utf8');
 const actionCancelCode = fs.readFileSync(path.join(root, 'scripts/action-cancel.js'), 'utf8');
 const actionErrorCode = fs.readFileSync(path.join(root, 'scripts/action-error.js'), 'utf8');
+const actionHealthCode = fs.readFileSync(path.join(root, 'scripts/action-health.js'), 'utf8');
 
 const webhookWorkflow = {
   name: 'Bugfix Webhook Demo',
@@ -206,6 +207,7 @@ const dashboardWorkflow = {
               mkRule('reject',    '❌ Reject Run'),
               mkRule('create-pr', '📦 Create GitHub PR'),
               mkRule('cancel',    '🚫 Cancel Run'),
+              mkRule('health',    '💓 Health Check'),
             ],
           },
           options: { fallbackOutput: 'none' },
@@ -251,9 +253,14 @@ const dashboardWorkflow = {
       id: 'act-cancel-001', name: '🚫 Cancel Run', type: 'n8n-nodes-base.code',
       typeVersion: 2, position: [920, 1020],
     },
+    {
+      parameters: { mode: 'runOnceForAllItems', jsCode: actionHealthCode },
+      id: 'act-health-001', name: '💓 Health Check', type: 'n8n-nodes-base.code',
+      typeVersion: 2, position: [920, 1180],
+    },
     // Single Respond node — all branches converge here
     {
-      parameters: { respondWith: 'json', responseBody: '={{ { response: $json.response, runId: $json.runId, status: $json.status } }}', options: {} },
+      parameters: { respondWith: 'json', responseBody: '={{ { response: $json.response, runId: $json.runId, status: $json.status, online: $json.online, run: $json.run } }}', options: {} },
       id: 'dash-respond-json-001', name: '📤 Respond to Client', type: 'n8n-nodes-base.respondToWebhook',
       typeVersion: 1.1, position: [1180, 650],
     },
@@ -272,6 +279,7 @@ const dashboardWorkflow = {
         [{ node: '❌ Reject Run', type: 'main', index: 0 }],              // output 4 = reject
         [{ node: '📦 Create GitHub PR', type: 'main', index: 0 }],        // output 5 = create-pr
         [{ node: '🚫 Cancel Run', type: 'main', index: 0 }],              // output 6 = cancel
+        [{ node: '💓 Health Check', type: 'main', index: 0 }],            // output 7 = health
       ],
     },
     '⚠️ Handle Invalid Action': { main: [[{ node: '📤 Respond to Client', type: 'main', index: 0 }]] },
@@ -281,6 +289,7 @@ const dashboardWorkflow = {
     '❌ Reject Run':            { main: [[{ node: '📤 Respond to Client', type: 'main', index: 0 }]] },
     '📦 Create GitHub PR':      { main: [[{ node: '📤 Respond to Client', type: 'main', index: 0 }]] },
     '🚫 Cancel Run':            { main: [[{ node: '📤 Respond to Client', type: 'main', index: 0 }]] },
+    '💓 Health Check':          { main: [[{ node: '📤 Respond to Client', type: 'main', index: 0 }]] },
   },
   pinData: {},
   settings: { executionOrder: 'v1' },

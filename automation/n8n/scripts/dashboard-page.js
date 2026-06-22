@@ -511,12 +511,17 @@ if(params.get('runId')) {
 }
 if(params.get('tab')) switchTab(params.get('tab'));
 
-// ── orchestrator health check ─────────────────────────────
+// ── orchestrator health check (via n8n — avoids browser CORS to :4400) ──
 (async()=>{
   try {
-    const r=await fetch(window.location.origin.replace('5678','4400')+'/health',{method:'GET'});
-    if(r.ok){$('orchDot').className='orch-dot ok';$('orchLabel').textContent='Orchestrator: online';}
-    else throw 1;
+    const res = await callAction({ action: 'health' });
+    if (res.online) {
+      $('orchDot').className='orch-dot ok';
+      $('orchLabel').textContent='Orchestrator: online';
+    } else {
+      $('orchDot').className='orch-dot err';
+      $('orchLabel').textContent=res.response || 'Orchestrator: offline';
+    }
   } catch {
     $('orchDot').className='orch-dot err';
     $('orchLabel').textContent='Orchestrator: offline — start with: npm run dev in automation/orchestrator';

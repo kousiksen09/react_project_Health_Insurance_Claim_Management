@@ -106,6 +106,11 @@ export function countBuildErrors(output: string): number {
   return tsErrors + csErrors;
 }
 
+/** MSB3027/MSB3021 — dotnet cannot overwrite .exe while API is running. */
+export function isFileLockBuildFailure(output: string): boolean {
+  return /MSB3027|MSB3021|being used by another process|file is locked by/i.test(output);
+}
+
 export function toCommandResult(name: string, result: ExecResult, note?: string): CommandResult {
   return {
     name,
