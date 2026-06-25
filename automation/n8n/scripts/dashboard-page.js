@@ -1,5 +1,5 @@
 /**
- * n8n Code node — serve the Bug Fix Automation Dashboard HTML.
+ * n8n Code node — serve the Autonomous Maintenance dashboard HTML.
  * GET /bugfix/dashboard → rich tabbed single-page UI.
  */
 
@@ -8,7 +8,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Bug Fix Automation</title>
+<title>Autonomous Maintenance</title>
 <style>
 :root {
   --bg:#f0f2f8;--surface:#fff;--border:#dde1ee;--text:#1a1a2e;--muted:#5a6080;
@@ -111,7 +111,7 @@ textarea{min-height:140px;resize:vertical}
 <body>
 <header>
   <span style="font-size:1.3rem">🐛</span>
-  <h1>Bug Fix Automation</h1>
+  <h1>Autonomous Maintenance</h1>
   <div class="orch-status">
     <div class="orch-dot" id="orchDot"></div>
     <span id="orchLabel">Orchestrator</span>
@@ -320,7 +320,7 @@ $('submitBug').addEventListener('click', async () => {
     }
   } catch(e) {
     const hint = e.message.includes('fetch') || e.message.includes('Failed')
-      ? '\\n\\nCheck:\\n• Is the "Bug Fix Dashboard" workflow active in n8n?\\n• URL: ' + ACTION_URL
+      ? '\\n\\nCheck:\\n• Is the "Autonomous Maintenance" workflow active in n8n?\\n• URL: ' + ACTION_URL
       : '';
     showResult('reportResult', 'Error: ' + e.message + hint, true);
   } finally {
@@ -405,7 +405,7 @@ async function doCheckStatus(runId) {
     }
   } catch(e) {
     $('statusCard').innerHTML = '<div class="result-box err">Network error: '+escHtml(e.message)+
-      '<br><small>Is the "Bug Fix Dashboard" workflow active in n8n?</small></div>';
+      '<br><small>Is the "Autonomous Maintenance" workflow active in n8n?</small></div>';
   } finally {
     $('checkBtn').disabled=false;
   }

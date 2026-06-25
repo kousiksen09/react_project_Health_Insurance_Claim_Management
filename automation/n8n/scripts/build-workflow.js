@@ -143,7 +143,7 @@ fs.writeFileSync(path.join(root, 'bugfix-chat-demo.json'), JSON.stringify(chatWo
 //                                        📤 Respond to Client
 
 const dashboardWorkflow = {
-  name: 'Bug Fix Dashboard',
+  name: 'Autonomous Maintenance',
   nodes: [
     // ── GET: serve HTML ───────────────────────────────────────────────────────────────────────
     {
