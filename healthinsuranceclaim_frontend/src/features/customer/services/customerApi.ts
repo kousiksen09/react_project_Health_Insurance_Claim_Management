@@ -64,7 +64,9 @@ export const customerApi = {
         formData.append(key, value.toString());
       }
     });
-    return apiClient.postFormData<string>('/api/customer/purchase-policy', formData);
+    const result = await apiClient.postFormData<string>('/api/customer/purchase-policy', formData);
+    cache.delete('available-policies');
+    return result;
   },
 
   getMyPolicies: async () => {

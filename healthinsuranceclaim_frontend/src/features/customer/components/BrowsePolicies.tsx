@@ -25,10 +25,23 @@ export const BrowsePolicies = () => {
       if (!isMounted) return;
       
       try {
-        const policiesData = await customerApi.getAvailablePolicies();
+        const [policiesData, myPoliciesData] = await Promise.all([
+          customerApi.getAvailablePolicies(),
+          customerApi.getMyPolicies(),
+        ]);
+
+        const ownedActivePolicyNames = new Set(
+          (myPoliciesData as { policyName: string; status: number }[])
+            .filter((p) => p.status === 1)
+            .map((p) => p.policyName)
+        );
+
+        const availablePolicies = (policiesData as PolicyOption[]).filter(
+          (p) => !ownedActivePolicyNames.has(p.name)
+        );
         
         if (!isMounted) return;
-        setPolicies(policiesData);
+        setPolicies(availablePolicies);
       } catch (error) {
         if (isMounted) {
           enqueueSnackbar('Failed to load policies. Please try again.', { variant: 'error' });
@@ -105,6 +118,7 @@ export const BrowsePolicies = () => {
         transactionNumber: transactionNumber.trim(),
         notes: 'Policy purchase from dashboard'
       });
+      setPolicies((prev) => prev.filter((p) => p.id !== selectedPolicy.id));
       setPaymentDialogOpen(false);
       enqueueSnackbar(`Policy purchased successfully! Transaction Number: ${transactionNumber}`, { variant: 'success' });
     } catch (error: any) {
