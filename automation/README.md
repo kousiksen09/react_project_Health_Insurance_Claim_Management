@@ -57,8 +57,8 @@ npm run dev
 automation/
 ├── orchestrator/     # Phase 3 — local bug-fix API
 ├── n8n-local/        # n8n workflow engine
-├── n8n/              # Webhook demo workflow (import bugfix-webhook-demo.json)
-│   └── bugfix-webhook-demo.json
+├── n8n/              # Single n8n workflow (import sdlc-automation-all-in-one.json)
+│   └── sdlc-automation-all-in-one.json
 ├── DEMO_GUIDE.md     # End-to-end demo walkthrough
 ├── scripts/          # Phase 5 validation helpers
 └── artifacts/        # gitignored run outputs

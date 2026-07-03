@@ -1,172 +1,112 @@
-# n8n Bugfix Webhook Demo
+# n8n SDLC Automation
 
-Importable workflow: **n8n webhook → orchestrator → poll → JSON response**.
+Single importable workflow for ADO intake, deploy triggers, and the browser dashboard.
 
-Uses **only built-in n8n nodes** (no LangChain Chat). Works on **community / self-hosted** n8n — no Enterprise Variables required.
-
-Replaces Outlook/ServiceNow intake for local demos. Same `POST /runs/start` contract as email.
-
-## Prerequisites
+## Quick start
 
 | Service | URL | Notes |
 |---------|-----|--------|
-| Orchestrator | `http://127.0.0.1:4400` | `npm run dev` in `automation/orchestrator` |
+| Orchestrator | `http://127.0.0.1:4400` (demo) or `:4401` (PCI) | `npm run dev` / `npm run dev:pci` in `automation/orchestrator` |
 | n8n | `http://localhost:5678` | `npm start` in `automation/n8n-local` |
-| `ORCHESTRATOR_API_KEY` | — | Must match orchestrator `.env` |
-
-Optional orchestrator env for live agent runs: `CURSOR_API_KEY`, `ALLOW_DIRTY_REPO=true`.
-
-## Setup
+| `ORCHESTRATOR_API_KEY` | — | Must match orchestrator `.env` / `.env.pci` |
 
 ### 1. Start orchestrator
 
 ```powershell
 cd automation\orchestrator
-copy .env.example .env
-# Set ORCHESTRATOR_API_KEY and REPO_ROOT
-npm run dev
+copy .env.example .env   # or copy .env.pci.example .env.pci for PCI
+npm run dev              # or: npm run dev:pci
 ```
 
-Verify: `curl http://127.0.0.1:4400/health`
-
-### 2. Configure n8n (no Enterprise Variables)
+### 2. Configure n8n
 
 ```powershell
 cd automation\n8n-local
 copy .env.example .env
-# Edit .env — set ORCHESTRATOR_API_KEY to the SAME value as orchestrator/.env
+# Set ORCHESTRATOR_API_KEY and ORCHESTRATOR_URL (4400 or 4401)
 npm install
 npm start
 ```
 
-Open `http://localhost:5678`
-
-**Alternative:** after import, open the **Process message** Code node and set `CONFIG.ORCHESTRATOR_API_KEY` at the top of the script.
-
 ### 3. Import workflow
 
-1. Delete or ignore the old **Bugfix Chat Demo** (LangChain nodes will not activate).
-2. **Workflows → Import from File**
-3. Select `automation/n8n/bugfix-webhook-demo.json`
-4. **Activate** the workflow (toggle top-right)
-5. **Save**
+1. **Workflows → Import from File**
+2. Select `automation/n8n/sdlc-automation-all-in-one.json`
+3. **Activate** the workflow
 
-### 4. Test with PowerShell
+### 4. Open the dashboard
 
-```powershell
-cd automation\n8n\scripts
-.\test-webhook.ps1
-```
+Copy the **Production URL** from the **GET Dashboard** webhook node:
 
-Or with curl:
+`http://localhost:5678/webhook/sdlc/dashboard`
 
-```powershell
-curl -X POST http://localhost:5678/webhook/bugfix-demo `
-  -H "Content-Type: application/json" `
-  -d "{\"message\": \"[BUG] Test bug\n\ncomponent: frontend\n\nShort description here.\"}"
-```
+See [N8N_UI_GUIDE.md](./N8N_UI_GUIDE.md) for the full UI walkthrough.
 
-Response JSON: `{ "response": "..." }` with run summary when complete.
+---
 
-## Message format
+## Webhook endpoints (one workflow)
 
-POST JSON body:
+| Trigger | Path | Purpose |
+|---------|------|---------|
+| Webhook POST | `/webhook/ado-work-item-intake` | ADO Service Hook — Bug + PBI intake |
+| Webhook POST | `/webhook/orchestrator-deploy-trigger` | Staging deploy dispatch + poll |
+| Webhook GET | `/webhook/sdlc/dashboard` | Browser dashboard (Report / Track / Approve) |
+| Webhook POST | `/webhook/sdlc/action` | Dashboard backing API |
 
-```json
-{ "message": "your command or bug report text" }
-```
+---
 
-`text` also works instead of `message`.
+## ADO Service Hooks
 
-### Report a bug
+Point both Bug and PBI subscriptions at:
 
-```
-[BUG] Notification label shows ClaimSubmitted
+`http://localhost:5678/webhook/ado-work-item-intake`
 
-component: frontend
-area: healthinsuranceclaim_frontend/src/features/notifications/components/NotificationsPage.tsx
-severity: low
+(Full setup: [DEMO_WALKTHROUGH.md](../DEMO_WALKTHROUGH.md))
 
-On /notifications the type chip shows ClaimSubmitted instead of Claim Submitted.
-```
+---
 
-### After run completes
+## Optional: deploy loop
 
-Response includes run ID, branch, summary, validation, and changed files.
-
-### Approve (manual gate)
-
-```json
-{ "message": "approve run_20260618_160000_abc123" }
-```
-
-### Reject
-
-```json
-{ "message": "reject run_20260618_160000_abc123 Fix scope too broad" }
-```
-
-### Other commands
+Set in orchestrator `.env`:
 
 ```
-status run_20260618_160000_abc123
-create-pr run_20260618_160000_abc123
-cancel run_20260618_160000_abc123
+N8N_EVENT_WEBHOOK_URL=http://localhost:5678/webhook/orchestrator-deploy-trigger
 ```
 
-For email-based review, use `GET /runs/:id/approval-summary` — see [MANUAL_APPROVAL_FLOW.md](../orchestrator/MANUAL_APPROVAL_FLOW.md).
+Edit the **Trigger and poll deploy** Code node for GitHub Actions or Azure Pipelines.
 
-## Workflow nodes
+---
 
-```
-Webhook (POST /webhook/bugfix-demo)  →  Process message (Code)  →  Respond to Webhook
-```
+## Validate dashboard script
 
-Logic lives in `scripts/process-webhook-message.js` (embedded in imported JSON). Regenerate JSON after editing:
+After editing the dashboard Code node:
 
 ```powershell
 cd automation\n8n
-node scripts/build-workflow.js
+node scripts/validate-dashboard.js
 ```
 
-## Troubleshooting
-
-| Issue | Fix |
-|-------|-----|
-| `Unrecognized node type: langchain.chat` | **Not a broken install.** n8n 1.82 has no `@n8n/n8n-nodes-langchain.chat` node. Re-import the updated `bugfix-chat-demo.json` (2 nodes only: Chat Trigger → Code). |
-| Missing API key message | Set `ORCHESTRATOR_API_KEY` in `n8n-local/.env` or Code node `CONFIG` |
-| Variables menu is Enterprise-only | Use `n8n-local/.env` or edit Code node `CONFIG` — not n8n Variables |
-| `404` on webhook URL | Workflow must be **Active**; path is `/webhook/bugfix-demo` |
-| `REPO_LOCK_HELD` | Cancel active run or wait for completion |
-| `401 Unauthorized` | API keys must match orchestrator `.env` |
-| `Request failed with status code 400` | Orchestrator rejected the payload (often empty description or invalid component/severity). Re-import updated workflow JSON, or send a full `[BUG]` message with description lines. |
-| Poll timeout | Agent/validation slow — use `status <runId>` later |
-| Connection refused | Start orchestrator on port 4400 |
-
-## Legacy chat workflow
-
-`bugfix-chat-demo.json` requires LangChain nodes (`@n8n/n8n-nodes-langchain.chat`). Many local installs cannot activate it. Use the webhook demo instead.
-
-## Later: swap webhook for email or ServiceNow
-
-Keep the same orchestrator API. Replace only the trigger + parser in n8n:
-
-| Intake | n8n change |
-|--------|------------|
-| Outlook | Microsoft Outlook / IMAP trigger → map to `BugIntakePayload` |
-| ServiceNow | Webhook trigger → map ticket fields to payload |
-| Webhook (now) | This workflow |
-
-See [BUG_AUTOMATION_CONTRACTS.md](../BUG_AUTOMATION_CONTRACTS.md).
+---
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| [N8N_WORKFLOW_BLUEPRINT.md](./N8N_WORKFLOW_BLUEPRINT.md) | **Production node-by-node design** (WF-1 + WF-2) |
-| `bugfix-control-panel.json` | **Browser UI** — status, approve, reject, PR (see [N8N_UI_GUIDE.md](./N8N_UI_GUIDE.md)) |
-| `bugfix-webhook-demo.json` | **Import for API tests** — webhook demo (community n8n) |
-| `bugfix-chat-demo.json` | Legacy LangChain chat demo (often fails locally) |
-| `scripts/process-webhook-message.js` | Code node source |
-| `scripts/test-webhook.ps1` | PowerShell test client |
-| `scripts/build-workflow.js` | Regenerate JSON from script |
+| `sdlc-automation-all-in-one.json` | **Import this** — single n8n workflow |
+| [N8N_UI_GUIDE.md](./N8N_UI_GUIDE.md) | Dashboard usage |
+| [N8N_WORKFLOW_BLUEPRINT.md](./N8N_WORKFLOW_BLUEPRINT.md) | Production design notes (historical) |
+| [DEMO_WALKTHROUGH.md](../DEMO_WALKTHROUGH.md) | End-to-end ADO bug + PBI guide |
+| `scripts/*.js` | Reference source for Code node logic |
+| `scripts/validate-dashboard.js` | Syntax-check dashboard HTML/JS |
+
+## Troubleshooting
+
+| Issue | Fix |
+|-------|-----|
+| Missing API key | Set `ORCHESTRATOR_API_KEY` in `n8n-local/.env` |
+| `404` on webhook | Workflow must be **Active** |
+| ADO webhook 404 in browser | ADO intake is **POST only** — configure Service Hook, don't open URL in browser |
+| `REPO_LOCK_HELD` | Approve/reject/cancel the active run in the dashboard |
+| Orchestrator offline (red dot) | Start orchestrator; check `ORCHESTRATOR_URL` port |
+
+See [BUG_AUTOMATION_CONTRACTS.md](../BUG_AUTOMATION_CONTRACTS.md) for orchestrator API contracts.

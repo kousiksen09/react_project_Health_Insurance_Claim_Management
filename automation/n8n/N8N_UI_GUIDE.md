@@ -1,56 +1,50 @@
-# n8n UI Guide — Progress, Approve, Reject (without chat commands)
+# n8n UI Guide — Dashboard, progress, approve/reject
 
-On **n8n 1.82 community**, native Chat cannot send mid-run progress updates (that needs n8n 2.x **Chat** node). This guide shows what **does** work in the n8n UI today.
+On **n8n 1.82 community**, use the **SDLC Automation dashboard** (single consolidated workflow) for the full browser UI.
 
-## Three ways to interact
+## Two ways to interact
 
 | Method | Best for |
 |--------|----------|
-| **Control Panel** (recommended) | Approve, reject, status, create PR, report bugs — dropdown + form |
+| **SDLC Dashboard** (recommended) | Report bug/PBI, track runs, approve at every gate (plan, patch, UAT), create PR |
 | **Executions tab** | Live progress while agent/validation runs |
-| **Chat workflow** | Quick demo intake (optional; same backend) |
 
-## 1. Control Panel (approve / reject / status in browser)
+## 1. SDLC Dashboard
 
 ### Setup
 
-1. Import `automation/n8n/bugfix-control-panel.json`
+1. Import `automation/n8n/sdlc-automation-all-in-one.json`
 2. **Activate** the workflow
-3. Open the **Panel: GET** Webhook node → copy **Production URL**  
-   Example: `http://localhost:5678/webhook/bugfix-panel`
+3. Open the **GET Dashboard** Webhook node → copy **Production URL**  
+   Example: `http://localhost:5678/webhook/sdlc/dashboard`
 4. Open that URL in your browser
 
 ### What you get
 
-- **Action dropdown:** Report bug · Check status · Approve · Reject · Create PR · Cancel
-- **Run ID** field (for everything except new bugs)
-- **Text area** for bug report or reject reason
-- **Result box** with orchestrator response
+Three tabs:
 
-No chat commands required.
+| Tab | Purpose |
+|-----|---------|
+| **Report** | Start a new Bug or PBI/User Story run |
+| **Track** | Enter Run ID, check status, auto-refresh every 15s |
+| **Approve** | Gate 1 (plan), Gate 2 (patch), UAT, Create PR, Cancel — buttons shown based on current status |
+
+The dashboard calls `POST /webhook/sdlc/action` on the same workflow (no separate import needed).
 
 ### Typical demo flow
 
-1. **Report bug** → paste `[BUG]` message → Submit  
-2. Wait (or watch **Executions** in n8n)  
-3. Copy **Run ID** from the result  
-4. **Check status** → paste Run ID → Submit  
-5. **Approve** or **Reject** → paste Run ID → Submit  
-6. **Create PR** (if approved and `GITHUB_TOKEN` set)
+1. **Report** → paste `[BUG]` message or fill PBI fields → **Start run**
+2. Switch to **Track** (automatic) and watch status update
+3. When status is `awaiting_plan_approval` or `awaiting_approval` or `awaiting_uat`, open **Approve** → **Load** → use the action buttons
+4. For bug runs after approval, **Create PR** if not created automatically
 
 ## 2. Executions tab (progress in n8n UI)
 
 While a run is processing:
 
 1. In n8n left sidebar → **Executions**
-2. Open the latest **Bugfix Chat Demo** or **Bugfix Control Panel** execution
-3. Watch nodes turn green as the workflow runs (poll loop can take several minutes)
-
-This is the built-in n8n “progress view” for long runs.
-
-## 3. Chat workflow (optional)
-
-`bugfix-chat-demo.json` still works for intake. Approve/reject via typed commands is optional if you use the Control Panel instead.
+2. Open the latest **SDLC Automation (All-in-One)** execution
+3. Watch nodes turn green as the workflow runs
 
 ---
 
@@ -58,28 +52,31 @@ This is the built-in n8n “progress view” for long runs.
 
 | Feature | n8n 1.82 | n8n 2.x+ |
 |---------|----------|----------|
-| Chat intake | Yes (Chat Trigger) | Yes |
-| Reply when workflow finishes | Yes (`output` field) | Yes |
-| **Progress messages during run** | No | Yes (Chat node “Send message”) |
-| **Approve / Reject buttons in chat** | No | Partial (Chat “approval” mode) |
-| **Form / dropdown in n8n** | Control Panel webhook | + Form Trigger |
+| Browser dashboard | Yes (`/webhook/sdlc/dashboard`) | Yes |
+| **Progress messages during run** | Track tab auto-refresh | Yes (Chat node) |
+| **Approve / Reject at all gates** | Approve tab | Partial (Chat approval mode) |
 
-For your install, the **Control Panel + Executions** combo is the practical “full UI” experience.
+For your install, the **Dashboard + Executions** combo is the practical UI experience.
 
 ---
 
-## Workflows to import
+## Workflow to import
 
 | File | Purpose |
 |------|---------|
-| `bugfix-control-panel.json` | **Browser UI** — status, approve, reject, PR |
-| `bugfix-chat-demo.json` | Optional chat intake |
-| `bugfix-webhook-demo.json` | API/script testing |
+| `sdlc-automation-all-in-one.json` | ADO intake + deploy trigger + dashboard + all approval actions |
+
+Also registers:
+
+- `POST /webhook/ado-work-item-intake` — ADO Service Hooks
+- `POST /webhook/orchestrator-deploy-trigger` — optional deploy loop
+- `GET /webhook/sdlc/dashboard` — browser UI
+- `POST /webhook/sdlc/action` — dashboard API
 
 ## Troubleshooting
 
 | Issue | Fix |
 |-------|-----|
-| Another run is active | Control Panel → **Check status** on active run → **Approve** or **Reject** |
-| Panel 404 | Activate **Bugfix Control Panel** workflow |
-| Empty result | Set `ORCHESTRATOR_API_KEY` in `automation/n8n-local/.env` |
+| Another run is active | Dashboard **Track** tab → find active run → **Approve** tab → Approve or Reject |
+| Dashboard 404 | Activate **SDLC Automation (All-in-One)** workflow |
+| Empty result / offline orchestrator | Set `ORCHESTRATOR_API_KEY` in `automation/n8n-local/.env`; start orchestrator (`npm run dev` or `npm run dev:pci`) |

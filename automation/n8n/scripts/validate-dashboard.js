@@ -1,5 +1,5 @@
 // Validates the served dashboard HTML's <script> body by node-parsing it.
-// Reads bugfix-dashboard.json, finds the Build Dashboard Page node,
+// Reads sdlc-automation-all-in-one.json, finds the Build Dashboard Page node,
 // runs its jsCode in a sandbox to obtain the final HTML, then extracts
 // and parses the inner <script>...</script> with new Function() to catch
 // any SyntaxError that would crash the browser.
@@ -10,7 +10,7 @@ import url from 'node:url';
 import vm from 'node:vm';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
-const jsonPath = path.join(__dirname, '..', 'bugfix-dashboard.json');
+const jsonPath = path.join(__dirname, '..', 'sdlc-automation-all-in-one.json');
 const wf = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
 
 const node = wf.nodes.find(n => n.name === 'Build Dashboard Page');

@@ -17,8 +17,9 @@ export function createRunId(now = new Date()): string {
   return `run_${stamp}_${suffix}`;
 }
 
-export function buildBranchName(runId: string, title: string): string {
-  return `bugfix/${runId}-${slugifyTitle(title)}`;
+export function buildBranchName(runId: string, title: string, type: 'bug' | 'pbi' = 'bug'): string {
+  const prefix = type === 'pbi' ? 'feature' : 'bugfix';
+  return `${prefix}/${runId}-${slugifyTitle(title)}`;
 }
 
 export function relativeArtifactsPath(runId: string): string {

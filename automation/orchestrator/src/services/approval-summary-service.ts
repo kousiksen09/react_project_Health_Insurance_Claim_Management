@@ -1,6 +1,7 @@
 import { config } from '../config.js';
 import type { ApprovalReviewSummary, RunResult } from '../types/contracts.js';
 import { canApprove, canReject } from './run-status.js';
+import { coreOf } from '../utils/intake-helpers.js';
 
 function escapeHtml(text: string): string {
   return text
@@ -17,19 +18,17 @@ function buildChecklist(run: RunResult): string[] {
 
   items.push(`Review ${changed.length} changed file(s) on branch ${run.git?.branchName ?? 'n/a'}`);
   if (validation) {
-    items.push(
-      validation.buildPassed
-        ? 'Backend build passed'
-        : `Backend build failed${validation.failureReason ? `: ${validation.failureReason}` : ''}`,
-    );
-    items.push(
-      validation.testsPassed
-        ? `Tests passed (${validation.testSummary})`
-        : `Tests need attention (${validation.testSummary})`,
-    );
+    items.push(validation.buildPassed ? 'Backend build passed' : `Backend build failed${validation.failureReason ? `: ${validation.failureReason}` : ''}`);
+    items.push(validation.testsPassed ? `Tests passed (${validation.testSummary})` : `Tests need attention (${validation.testSummary})`);
   }
-  items.push('Confirm root cause and fix match the reported bug');
-  items.push('Approve only if acceptable for a PR (PR creation is a separate step)');
+  if (run.coverage?.ran) {
+    items.push(run.coverage.weak ? `Coverage below ${run.coverage.minThresholdPct}% on at least one changed file — see coverage-delta.json` : 'Coverage meets the configured threshold on changed files');
+  }
+  if (run.aiReview?.ran) {
+    items.push(run.aiReview.highSeverityCount > 0 ? `AI review flagged ${run.aiReview.highSeverityCount} high-severity issue(s) — see ai-review.md` : `AI review: ${run.aiReview.issuesFound} issue(s) found, none high severity`);
+  }
+  items.push(run.type === 'pbi' ? 'Confirm the diff matches the approved plan (see plan.md)' : 'Confirm root cause and fix match the reported bug');
+  items.push('Approve only if acceptable for a PR (PR creation is a separate step for bug fixes; automatic for PBIs)');
   return items;
 }
 
@@ -38,6 +37,7 @@ export function buildApprovalReviewSummary(run: RunResult): ApprovalReviewSummar
   const analysis = run.analysis;
   const changedFiles = analysis?.changedFiles ?? [];
   const pending = canApprove(run);
+  const core = coreOf(run.intake);
 
   const recommendedAction = pending
     ? validation?.passed
@@ -49,21 +49,24 @@ export function buildApprovalReviewSummary(run: RunResult): ApprovalReviewSummar
         ? 'already_rejected'
         : 'none';
 
-  const subject = `[Review] Bug fix ready: ${run.intake.bug.title} (${run.runId})`;
+  const subject = `[Review] ${run.type === 'pbi' ? 'Feature' : 'Bug fix'} ready: ${core.title} (${run.runId})`;
 
   const bodyPlain = [
-    `Bug-fix run ${run.runId} is ready for manual review.`,
+    `${run.type === 'pbi' ? 'PBI' : 'Bug-fix'} run ${run.runId} is ready for manual review.`,
     '',
-    `Title: ${run.intake.bug.title}`,
-    `Reporter: ${run.intake.reporter.email}`,
+    `Title: ${core.title}`,
+    `Reporter: ${core.reporterEmail}`,
     `Branch: ${run.git?.branchName ?? 'n/a'}`,
     `Status: ${run.status}`,
+    core.ado ? `ADO work item: ${core.ado.workItemUrl}` : '',
     '',
     'Summary:',
     analysis?.bugSummary ?? '(not available)',
     '',
-    'Root cause:',
+    'Root cause / approach:',
     analysis?.rootCauseSummary ?? '(not available)',
+    '',
+    run.plan ? `Plan: ${run.plan.taskCount} task(s), ${run.plan.estimatedTotalLoc} est. LOC, release impact ${run.plan.releaseImpact} (see plan.md)` : '',
     '',
     `Changed files (${changedFiles.length}):`,
     ...(changedFiles.length > 0 ? changedFiles.map((f) => `  - ${f}`) : ['  (none)']),
@@ -74,6 +77,8 @@ export function buildApprovalReviewSummary(run: RunResult): ApprovalReviewSummar
     `- testsPassed: ${validation?.testsPassed ?? 'n/a'}`,
     `- testSummary: ${validation?.testSummary ?? 'n/a'}`,
     validation?.failureReason ? `- failureReason: ${validation.failureReason}` : '',
+    run.coverage?.ran ? `- coverage: ${run.coverage.weak ? 'WEAK — below ' + run.coverage.minThresholdPct + '%' : 'ok'} (see coverage-delta.json)` : '',
+    run.aiReview?.ran ? `- AI review: ${run.aiReview.issuesFound} issue(s), ${run.aiReview.highSeverityCount} high severity — ${run.aiReview.summary}` : '',
     '',
     'Reviewer checklist:',
     ...buildChecklist(run).map((item, i) => `${i + 1}. ${item}`),
@@ -97,29 +102,24 @@ export function buildApprovalReviewSummary(run: RunResult): ApprovalReviewSummar
     .join('\n');
 
   const bodyHtml = [
-    `<h2>Bug-fix review: ${escapeHtml(run.intake.bug.title)}</h2>`,
+    `<h2>${run.type === 'pbi' ? 'Feature' : 'Bug-fix'} review: ${escapeHtml(core.title)}</h2>`,
     `<p><strong>Run ID:</strong> ${escapeHtml(run.runId)}</p>`,
     `<p><strong>Branch:</strong> <code>${escapeHtml(run.git?.branchName ?? 'n/a')}</code></p>`,
-    `<p><strong>Reporter:</strong> ${escapeHtml(run.intake.reporter.email)}</p>`,
+    `<p><strong>Reporter:</strong> ${escapeHtml(core.reporterEmail)}</p>`,
+    core.ado ? `<p><strong>ADO:</strong> <a href="${escapeHtml(core.ado.workItemUrl)}">#${core.ado.workItemId}</a></p>` : '',
     `<h3>Summary</h3><p>${escapeHtml(analysis?.bugSummary ?? '(not available)')}</p>`,
-    `<h3>Root cause</h3><p>${escapeHtml(analysis?.rootCauseSummary ?? '(not available)')}</p>`,
+    `<h3>Root cause / approach</h3><p>${escapeHtml(analysis?.rootCauseSummary ?? '(not available)')}</p>`,
     `<h3>Changed files (${changedFiles.length})</h3>`,
-    changedFiles.length > 0
-      ? `<ul>${changedFiles.map((f) => `<li><code>${escapeHtml(f)}</code></li>`).join('')}</ul>`
-      : '<p>(none)</p>',
+    changedFiles.length > 0 ? `<ul>${changedFiles.map((f) => `<li><code>${escapeHtml(f)}</code></li>`).join('')}</ul>` : '<p>(none)</p>',
     `<h3>Validation</h3>`,
     `<ul>`,
     `<li>passed: ${validation?.passed ?? 'n/a'}</li>`,
     `<li>buildPassed: ${validation?.buildPassed ?? 'n/a'}</li>`,
     `<li>testsPassed: ${validation?.testsPassed ?? 'n/a'}</li>`,
     `<li>testSummary: ${escapeHtml(validation?.testSummary ?? 'n/a')}</li>`,
-    validation?.failureReason
-      ? `<li>failureReason: ${escapeHtml(validation.failureReason)}</li>`
-      : '',
+    validation?.failureReason ? `<li>failureReason: ${escapeHtml(validation.failureReason)}</li>` : '',
     `</ul>`,
-    pending
-      ? `<p><em>Awaiting your approve or reject decision. PR is not created automatically.</em></p>`
-      : `<p><em>Decision: ${run.approval.status}</em></p>`,
+    pending ? `<p><em>Awaiting your approve or reject decision. PR is not created automatically.</em></p>` : `<p><em>Decision: ${run.approval.status}</em></p>`,
   ]
     .filter(Boolean)
     .join('\n');
@@ -131,13 +131,15 @@ export function buildApprovalReviewSummary(run: RunResult): ApprovalReviewSummar
     status: run.status,
     decision: run.approval.status,
     recommendedAction,
-    bug: {
-      title: run.intake.bug.title,
-      description: run.intake.bug.description,
-      severity: run.intake.bug.severity ?? 'medium',
-      component: run.intake.bug.component ?? 'unknown',
-      reporterEmail: run.intake.reporter.email,
-      reporterName: run.intake.reporter.name,
+    workItem: {
+      type: run.type,
+      title: core.title,
+      description: core.description,
+      severity: core.severity,
+      component: core.component,
+      reporterEmail: core.reporterEmail,
+      reporterName: core.reporterName,
+      adoUrl: core.ado?.workItemUrl,
     },
     patch: {
       branchName: run.git?.branchName ?? '',
@@ -169,34 +171,23 @@ export function buildApprovalReviewSummary(run: RunResult): ApprovalReviewSummar
           }
         : null,
     },
-    email: {
-      subject,
-      bodyPlain,
-      bodyHtml,
-    },
+    email: { subject, bodyPlain, bodyHtml },
     api: {
       approve: {
         method: 'POST',
         path: `/runs/${run.runId}/approve`,
-        bodyExample: {
-          approvedBy: 'reviewer@example.com',
-          comment: 'Looks good',
-          createPr: false,
-        },
-        note: 'Set createPr true only after explicit review. Phase 7 implements push/PR.',
+        bodyExample: { approvedBy: 'reviewer@example.com', comment: 'Looks good', createPr: false },
+        note: 'Set createPr true only after explicit review. PBI runs create the PR automatically after doc updates.',
       },
       reject: {
         method: 'POST',
         path: `/runs/${run.runId}/reject`,
-        bodyExample: {
-          rejectedBy: 'reviewer@example.com',
-          reason: 'Fix scope too broad',
-        },
+        bodyExample: { rejectedBy: 'reviewer@example.com', reason: 'Fix scope too broad' },
       },
       createPr: {
         method: 'POST',
         path: `/runs/${run.runId}/create-pr`,
-        note: 'Requires status approved and GITHUB_TOKEN. Does not auto-merge.',
+        note: `Requires status approved and a configured git provider (${config.gitProvider}). Does not auto-merge.`,
       },
     },
     links: {

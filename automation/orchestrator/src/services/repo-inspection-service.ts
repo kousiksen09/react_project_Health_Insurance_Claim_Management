@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
-import path from 'node:path';
 import { config } from '../config.js';
 import { execCommand, toCommandResult } from '../utils/exec.js';
+import { detectBackendDir, detectFrontendDir } from './project-detection.js';
 import type { CommandResult } from '../types/contracts.js';
 
 export interface RepoInspection {
@@ -19,9 +19,6 @@ export interface RepoInspection {
   commands: CommandResult[];
   warnings: string[];
 }
-
-const FRONTEND_REL = 'healthinsuranceclaim_frontend';
-const BACKEND_REL = 'HealthInsuranceClaimAPI/HealthInsuranceClaimAPI';
 
 export const repoInspectionService = {
   async inspect(): Promise<RepoInspection> {
@@ -105,17 +102,9 @@ export const repoInspectionService = {
 
 async function detectProjects(repoRoot: string): Promise<RepoInspection['projects']> {
   const projects: RepoInspection['projects'] = {};
-  try {
-    await fs.access(path.join(repoRoot, FRONTEND_REL, 'package.json'));
-    projects.frontend = FRONTEND_REL;
-  } catch {
-    /* not present */
-  }
-  try {
-    await fs.access(path.join(repoRoot, BACKEND_REL, 'HealthInsuranceClaimAPI.csproj'));
-    projects.backend = BACKEND_REL;
-  } catch {
-    /* not present */
-  }
+  const frontend = await detectFrontendDir(repoRoot);
+  if (frontend !== null) projects.frontend = frontend;
+  const backend = await detectBackendDir(repoRoot);
+  if (backend !== null) projects.backend = backend;
   return projects;
 }

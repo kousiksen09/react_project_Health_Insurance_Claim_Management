@@ -1,11 +1,10 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config.js';
-import type { BugIntakePayload, RunResult, RunStatus } from '../types/contracts.js';
+import type { RunResult, RunStatus, WorkItemIntakePayload } from '../types/contracts.js';
 import { buildBranchName, createRunId, relativeArtifactsPath } from '../utils/ids.js';
-
-/** Statuses where the pipeline is actively running (not waiting for human input). */
-const IN_FLIGHT_STATUSES = new Set<RunStatus>(['queued', 'analyzing', 'patch_created', 'validating']);
+import { coreOf, intakeType } from '../utils/intake-helpers.js';
+import { IN_FLIGHT_STATUSES } from './run-status.js';
 
 interface RunIndex {
   activeRunId: string | null;
@@ -97,17 +96,30 @@ class RunStore {
     return this.runs.get(runId);
   }
 
-  create(intake: BugIntakePayload): RunResult {
+  create(intake: WorkItemIntakePayload): RunResult {
     const now = new Date().toISOString();
+    const type = intakeType(intake);
     const runId = createRunId(new Date(intake.receivedAt));
-    const branchName = buildBranchName(runId, intake.bug.title);
+    const branchName = buildBranchName(runId, coreOf(intake).title, type);
 
     const run: RunResult = {
       runId,
       status: 'queued',
+      type,
       createdAt: now,
       updatedAt: now,
       intake,
+      planApproval: {
+        required: type === 'pbi',
+        status: type === 'pbi' ? 'pending' : 'not_applicable',
+        approvedBy: null,
+        approvedAt: null,
+        rejectedBy: null,
+        rejectedAt: null,
+        rejectedReason: null,
+        autoBlocked: false,
+        autoBlockReason: null,
+      },
       analysis: undefined,
       validation: undefined,
       git: {
@@ -120,6 +132,14 @@ class RunStore {
       approval: {
         required: true,
         status: 'pending',
+        approvedBy: null,
+        approvedAt: null,
+        rejectedBy: null,
+        rejectedAt: null,
+        rejectedReason: null,
+      },
+      uat: {
+        status: 'not_applicable',
         approvedBy: null,
         approvedAt: null,
         rejectedBy: null,
@@ -150,9 +170,13 @@ class RunStore {
       ...current,
       ...patch,
       approval: patch.approval ? { ...current.approval, ...patch.approval } : current.approval,
+      planApproval: patch.planApproval ? { ...current.planApproval, ...patch.planApproval } : current.planApproval,
+      uat: patch.uat ? { ...current.uat, ...patch.uat } : current.uat,
       git: patch.git ? { ...current.git!, ...patch.git } : current.git,
       analysis: patch.analysis ? { ...current.analysis, ...patch.analysis } : current.analysis,
       validation: patch.validation ? { ...current.validation, ...patch.validation } : current.validation,
+      deploy: patch.deploy ? { ...current.deploy, ...patch.deploy } as RunResult['deploy'] : current.deploy,
+      release: patch.release ? { ...current.release, ...patch.release } as RunResult['release'] : current.release,
       updatedAt: new Date().toISOString(),
     };
     this.runs.set(runId, updated);

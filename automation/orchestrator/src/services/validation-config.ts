@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config.js';
+import { detectBackendDir, detectBackendTestDir, detectFrontendDir } from './project-detection.js';
 
 export interface ValidationStepSpec {
   enabled: boolean;
@@ -10,9 +11,9 @@ export interface ValidationStepSpec {
 }
 
 export interface ValidationCommandPlan {
-  backendProjectRel: string;
-  backendSolutionRel: string;
-  frontendProjectRel: string;
+  backendProjectRel: string | null;
+  backendSolutionRel: string | null;
+  frontendProjectRel: string | null;
   backendTestProjectRel: string | null;
   build: {
     backend: ValidationStepSpec;
@@ -25,24 +26,15 @@ export interface ValidationCommandPlan {
   source: 'detected' | 'env_override';
 }
 
-const BACKEND_PROJECT = 'HealthInsuranceClaimAPI/HealthInsuranceClaimAPI';
-const BACKEND_SOLUTION = 'HealthInsuranceClaimAPI';
-const BACKEND_TESTS = 'HealthInsuranceClaimAPI/HealthInsuranceClaimAPI.Tests';
-const FRONTEND = 'healthinsuranceclaim_frontend';
-
 function envCommand(name: string): string | undefined {
   const value = process.env[name]?.trim();
   return value || undefined;
 }
 
-function envCwd(name: string, fallback: string): string {
-  return envCommand(name) ?? fallback;
-}
-
-async function pathExists(repoRoot: string, relativePath: string): Promise<boolean> {
+async function dirExists(repoRoot: string, relativePath: string): Promise<boolean> {
   try {
-    await fs.access(path.join(repoRoot, relativePath));
-    return true;
+    const stat = await fs.stat(path.join(repoRoot, relativePath));
+    return stat.isDirectory();
   } catch {
     return false;
   }
@@ -59,58 +51,73 @@ async function readPackageScripts(repoRoot: string, frontendRel: string): Promis
 }
 
 /**
- * Detect repo-specific validation commands with optional env overrides.
+ * Detect repo-specific validation commands and directories.
+ *
+ * Resolution order per project (backend/frontend):
+ *  1. Explicit VALIDATION_*_CWD env override — trusted directly (existence-checked, not
+ *     gated on any particular project-file name), so this always works regardless of repo shape.
+ *  2. Generic shallow auto-detection (see project-detection.ts) — looks for *.sln/*.csproj or
+ *     package.json at the repo root or one level down. Bounded and timeout-safe.
+ *  3. Not found — step is disabled with a clear skipReason.
  */
 export async function detectValidationPlan(): Promise<ValidationCommandPlan> {
   const repoRoot = config.repoRoot;
-  const hasBackend = await pathExists(repoRoot, path.join(BACKEND_PROJECT, 'HealthInsuranceClaimAPI.csproj'));
-  const hasFrontend = await pathExists(repoRoot, path.join(FRONTEND, 'package.json'));
-  const hasBackendTests = await pathExists(
-    repoRoot,
-    path.join(BACKEND_TESTS, 'HealthInsuranceClaimAPI.Tests.csproj'),
-  );
-  const scripts = hasFrontend ? await readPackageScripts(repoRoot, FRONTEND) : {};
+
+  const backendBuildCwdOverride = envCommand('VALIDATION_BACKEND_BUILD_CWD');
+  const backendTestCwdOverride = envCommand('VALIDATION_BACKEND_TEST_CWD');
+  const frontendCwdOverride = envCommand('VALIDATION_FRONTEND_BUILD_CWD') ?? envCommand('VALIDATION_FRONTEND_TEST_CWD');
+
+  const backendDir = backendBuildCwdOverride ?? backendTestCwdOverride ?? (await detectBackendDir(repoRoot));
+  const frontendDir = frontendCwdOverride ?? (await detectFrontendDir(repoRoot));
+  const backendTestDir = backendTestCwdOverride ?? (await detectBackendTestDir(repoRoot));
+
+  const hasBackend = backendDir !== null && (await dirExists(repoRoot, backendDir));
+  const hasFrontend = frontendDir !== null && (await dirExists(repoRoot, frontendDir));
+  const hasBackendTests = backendTestDir !== null && (await dirExists(repoRoot, backendTestDir));
+
+  const scripts = hasFrontend && frontendDir ? await readPackageScripts(repoRoot, frontendDir) : {};
 
   const backendBuildCmd = envCommand('VALIDATION_BACKEND_BUILD_CMD') ?? 'dotnet build --verbosity minimal';
-  const backendBuildCwd = envCwd('VALIDATION_BACKEND_BUILD_CWD', BACKEND_SOLUTION);
   const backendTestCmd =
     envCommand('VALIDATION_BACKEND_TEST_CMD') ?? (hasBackendTests ? 'dotnet test --no-build --verbosity minimal' : '');
-  const backendTestCwd = envCwd('VALIDATION_BACKEND_TEST_CWD', BACKEND_SOLUTION);
 
   const frontendBuildCmd = envCommand('VALIDATION_FRONTEND_BUILD_CMD') ?? (scripts.build ? 'npm run build' : '');
-  const frontendBuildCwd = envCwd('VALIDATION_FRONTEND_BUILD_CWD', FRONTEND);
   const frontendTestCmd =
     envCommand('VALIDATION_FRONTEND_TEST_CMD') ??
     (scripts.test ? 'npm test' : scripts['test:unit'] ? 'npm run test:unit' : '');
 
-  const frontendTestCwd = envCwd('VALIDATION_FRONTEND_TEST_CWD', FRONTEND);
   const skipFrontendBuild = config.validation.skipFrontendBuild;
 
   const envOverride = Boolean(
-    envCommand('VALIDATION_BACKEND_BUILD_CMD') ||
+    backendBuildCwdOverride ||
+      backendTestCwdOverride ||
+      frontendCwdOverride ||
+      envCommand('VALIDATION_BACKEND_BUILD_CMD') ||
       envCommand('VALIDATION_BACKEND_TEST_CMD') ||
       envCommand('VALIDATION_FRONTEND_BUILD_CMD') ||
       envCommand('VALIDATION_FRONTEND_TEST_CMD'),
   );
 
   return {
-    backendProjectRel: BACKEND_PROJECT,
-    backendSolutionRel: BACKEND_SOLUTION,
-    frontendProjectRel: FRONTEND,
-    backendTestProjectRel: hasBackendTests ? BACKEND_TESTS : null,
+    backendProjectRel: backendDir,
+    backendSolutionRel: backendDir,
+    frontendProjectRel: frontendDir,
+    backendTestProjectRel: hasBackendTests ? backendTestDir : null,
     build: {
       backend: {
         enabled: hasBackend,
-        cwd: path.join(repoRoot, backendBuildCwd),
+        cwd: path.join(repoRoot, backendDir ?? ''),
         command: backendBuildCmd,
-        skipReason: hasBackend ? undefined : 'Backend project not found',
+        skipReason: hasBackend
+          ? undefined
+          : 'No backend project detected — set VALIDATION_BACKEND_BUILD_CWD in .env',
       },
       frontend: {
         enabled: hasFrontend && Boolean(frontendBuildCmd) && !skipFrontendBuild,
-        cwd: path.join(repoRoot, frontendBuildCwd),
+        cwd: path.join(repoRoot, frontendDir ?? ''),
         command: frontendBuildCmd,
         skipReason: !hasFrontend
-          ? 'Frontend project not found'
+          ? 'No frontend project detected — set VALIDATION_FRONTEND_BUILD_CWD in .env'
           : skipFrontendBuild
             ? 'VALIDATION_SKIP_FRONTEND_BUILD=true'
             : !frontendBuildCmd
@@ -121,22 +128,22 @@ export async function detectValidationPlan(): Promise<ValidationCommandPlan> {
     test: {
       backend: {
         enabled: hasBackend && Boolean(backendTestCmd),
-        cwd: path.join(repoRoot, backendTestCwd),
+        cwd: path.join(repoRoot, backendTestDir ?? backendDir ?? ''),
         command: backendTestCmd,
         skipReason: !hasBackend
-          ? 'Backend project not found'
+          ? 'No backend project detected'
           : !hasBackendTests
-            ? 'No backend test project detected'
+            ? 'No backend test project detected — set VALIDATION_BACKEND_TEST_CWD in .env'
             : !backendTestCmd
               ? 'Backend test command not configured'
               : undefined,
       },
       frontend: {
         enabled: hasFrontend && Boolean(frontendTestCmd),
-        cwd: path.join(repoRoot, frontendTestCwd),
+        cwd: path.join(repoRoot, frontendDir ?? ''),
         command: frontendTestCmd,
         skipReason: !hasFrontend
-          ? 'Frontend project not found'
+          ? 'No frontend project detected'
           : !frontendTestCmd
             ? 'No frontend test script in package.json'
             : undefined,

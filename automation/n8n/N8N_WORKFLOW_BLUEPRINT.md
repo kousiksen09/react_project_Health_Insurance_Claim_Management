@@ -1,5 +1,7 @@
 # n8n Workflow Blueprint — Bug-Fix Automation
 
+> **Current implementation:** Import [`sdlc-automation-all-in-one.json`](./sdlc-automation-all-in-one.json) instead of building these workflows manually. This document remains as a production design reference.
+
 **Purpose:** Node-by-node design for n8n integration with the local orchestrator.  
 **Status:** Blueprint only — no exported workflow JSON (build manually in n8n 1.82+).  
 **Orchestrator:** `http://127.0.0.1:4400`  

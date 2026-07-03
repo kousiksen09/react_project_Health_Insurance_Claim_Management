@@ -1,5 +1,7 @@
 export type RunStatus =
+  // Shared intake
   | 'queued'
+  // Bug-fix pipeline (unchanged)
   | 'analyzing'
   | 'patch_created'
   | 'validating'
@@ -7,11 +9,45 @@ export type RunStatus =
   | 'approved'
   | 'rejected'
   | 'pr_created'
+  // PBI pipeline — planning gate (Gate 1) precedes coding
+  | 'planning'
+  | 'awaiting_plan_approval'
+  | 'plan_approved'
+  | 'plan_rejected'
+  | 'coding'
+  | 'test_generation'
+  | 'ai_review'
+  | 'doc_update'
+  // Post-PR lifecycle (both pipelines, once ADO/CI wiring is enabled)
+  | 'deploying'
+  | 'deployed'
+  | 'deploy_failed'
+  | 'awaiting_uat'
+  | 'uat_rejected'
+  | 'released'
   | 'failed';
 
+/** Work item source system. 'ado' is the primary path; email/chat remain for local demo/testing. */
+export type IntakeSource = 'email' | 'chat' | 'ado';
+
+/** Reference back to the originating Azure DevOps work item, when source === 'ado'. */
+export interface AdoWorkItemRef {
+  workItemId: number;
+  workItemType: string;
+  workItemUrl: string;
+  organization: string;
+  project: string;
+  areaPath?: string;
+  iterationPath?: string;
+  tags?: string[];
+  state: string;
+}
+
 export interface BugIntakePayload {
-  contractVersion: '1.0.0';
-  source: 'email' | 'chat';
+  contractVersion: '1.0.0' | '1.1.0';
+  /** Absent/undefined is treated as 'bug' for backwards compatibility with existing payloads. */
+  type?: 'bug';
+  source: IntakeSource;
   messageId: string;
   receivedAt: string;
   reporter: { email: string; name?: string };
@@ -31,8 +67,36 @@ export interface BugIntakePayload {
     rawEmailSnippet?: string;
     labels?: string[];
     externalTicketId?: string | null;
+    ado?: AdoWorkItemRef;
   };
 }
+
+/** Product Backlog Item intake — always sourced from ADO, always goes through the planning gate. */
+export interface PbiIntakePayload {
+  contractVersion: '1.1.0';
+  type: 'pbi';
+  source: 'ado';
+  messageId: string;
+  receivedAt: string;
+  reporter: { email: string; name?: string };
+  ado: AdoWorkItemRef;
+  pbi: {
+    title: string;
+    description: string;
+    /** Raw ADO acceptance-criteria field; may be empty — the agent then drafts ACs itself. */
+    acceptanceCriteria?: string;
+    storyPoints?: number;
+    priority?: 1 | 2 | 3 | 4;
+    assignedTo?: { email: string; name?: string };
+  };
+  metadata: {
+    adoEventType: string;
+    rawWebhookSnippet?: string;
+    labels?: string[];
+  };
+}
+
+export type WorkItemIntakePayload = BugIntakePayload | PbiIntakePayload;
 
 export interface CommandResult {
   name: string;
@@ -93,12 +157,134 @@ export interface ValidationResult {
   implementationNote?: string;
 }
 
+/** Gate 1 (PBI planning) approval state. Not applicable to the bug-fix pipeline. */
+export interface PlanApprovalState {
+  required: boolean;
+  status: 'not_applicable' | 'pending' | 'approved' | 'rejected';
+  approvedBy: string | null;
+  approvedAt: string | null;
+  rejectedBy: string | null;
+  rejectedAt: string | null;
+  rejectedReason: string | null;
+  /** True when the pipeline itself blocked the plan (oversized, migration, high risk) rather than a human. */
+  autoBlocked: boolean;
+  autoBlockReason: string | null;
+}
+
+export interface PlanTask {
+  id: string;
+  title: string;
+  layer: 'frontend' | 'backend' | 'db' | 'infra' | 'other';
+  files: string[];
+  changeType: 'add' | 'modify' | 'delete';
+  estimateLoc: number;
+  dependsOn: string[];
+}
+
+export interface PlanAcceptanceCriterion {
+  id: string;
+  given: string;
+  when: string;
+  then: string;
+}
+
+export interface PlanRisk {
+  level: 'high' | 'med' | 'low';
+  text: string;
+}
+
+/** Structured output of the planning stage (Gate 1). Persisted to plan.json/plan.md artifacts. */
+export interface WorkItemPlan {
+  summary: string;
+  acceptanceCriteria: PlanAcceptanceCriterion[];
+  affectedAreas: Array<{ layer: string; path: string }>;
+  tasks: PlanTask[];
+  edgeCases: string[];
+  scenarioCoverage: Array<{ acId: string; edgeCase: string; covered: boolean; note?: string }>;
+  risks: PlanRisk[];
+  openQuestions: string[];
+  outOfScope: string[];
+  requiresMigration: boolean;
+  requiresApiContractChange: boolean;
+  estimatedTotalLoc: number;
+  releaseImpact: 'patch' | 'minor' | 'major';
+}
+
+/** Slice of WorkItemPlan kept on the RunResult for quick access (full plan lives in plan.json). */
+export interface PlanSummary {
+  summary: string;
+  acceptanceCriteriaCount: number;
+  taskCount: number;
+  edgeCaseCount: number;
+  openQuestions: string[];
+  risks: PlanRisk[];
+  requiresMigration: boolean;
+  requiresApiContractChange: boolean;
+  estimatedTotalLoc: number;
+  releaseImpact: 'patch' | 'minor' | 'major';
+}
+
+export interface CoverageFileDelta {
+  file: string;
+  baseLinePct: number | null;
+  headLinePct: number | null;
+  deltaPct: number | null;
+}
+
+export interface CoverageDeltaSummary {
+  ran: boolean;
+  weak: boolean;
+  minThresholdPct: number;
+  files: CoverageFileDelta[];
+  note?: string;
+}
+
+export interface AiReviewSummary {
+  ran: boolean;
+  issuesFound: number;
+  highSeverityCount: number;
+  summary: string;
+  reviewArtifact?: string;
+}
+
+export interface DeployState {
+  status: 'pending' | 'in_progress' | 'succeeded' | 'failed';
+  environment: string;
+  url?: string;
+  pipelineRunUrl?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  note?: string;
+}
+
+export interface UatState {
+  status: 'not_applicable' | 'pending' | 'approved' | 'rejected';
+  approvedBy: string | null;
+  approvedAt: string | null;
+  rejectedBy: string | null;
+  rejectedAt: string | null;
+  rejectedReason: string | null;
+}
+
+export interface ReleaseState {
+  merged: boolean;
+  mergeCommitSha?: string;
+  tag?: string;
+  releasedAt?: string;
+  adoClosed: boolean;
+  error?: string;
+}
+
 export interface RunResult {
   runId: string;
   status: RunStatus;
+  /** Discriminates the pipeline this run follows; mirrors intake.type ('bug' default when absent). */
+  type: 'bug' | 'pbi';
   createdAt: string;
   updatedAt: string;
-  intake: BugIntakePayload;
+  intake: WorkItemIntakePayload;
+  planApproval: PlanApprovalState;
+  plan?: PlanSummary;
   analysis?: {
     bugSummary: string;
     rootCauseSummary: string;
@@ -125,6 +311,8 @@ export interface RunResult {
     testGapRecommendations?: TestGapRecommendation[];
     implementationNote?: string;
   };
+  coverage?: CoverageDeltaSummary;
+  aiReview?: AiReviewSummary;
   git?: {
     baseBranch: string;
     branchName: string;
@@ -144,6 +332,9 @@ export interface RunResult {
     rejectedReason: string | null;
     comment?: string | null;
   };
+  deploy?: DeployState;
+  uat: UatState;
+  release?: ReleaseState;
   artifactsPath: string;
   error: { code: string; message: string } | null;
 }
@@ -181,13 +372,15 @@ export interface ApprovalReviewSummary {
     | 'already_approved'
     | 'already_rejected'
     | 'none';
-  bug: {
+  workItem: {
+    type: 'bug' | 'pbi';
     title: string;
     description: string;
     severity: string;
     component: string;
     reporterEmail: string;
     reporterName?: string;
+    adoUrl?: string;
   };
   patch: {
     branchName: string;
@@ -256,6 +449,34 @@ export interface CreatePrRequest {
 
 export interface CancelRunRequest {
   cancelledBy: string;
+  reason?: string;
+}
+
+export interface ApprovePlanRequest {
+  approvedBy: string;
+  comment?: string;
+}
+
+export interface RejectPlanRequest {
+  rejectedBy: string;
+  reason?: string;
+}
+
+export interface DeployStatusRequest {
+  status: 'in_progress' | 'succeeded' | 'failed';
+  environment?: string;
+  url?: string;
+  pipelineRunUrl?: string;
+  note?: string;
+}
+
+export interface UatApproveRequest {
+  approvedBy: string;
+  comment?: string;
+}
+
+export interface UatRejectRequest {
+  rejectedBy: string;
   reason?: string;
 }
 

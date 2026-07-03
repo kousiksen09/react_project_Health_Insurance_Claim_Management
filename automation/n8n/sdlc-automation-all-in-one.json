@@ -1,0 +1,370 @@
+{
+  "name": "SDLC Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ado-work-item-intake",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "ado-trigger-001",
+      "name": "ADO Service Hook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 80],
+      "webhookId": "ado-work-item-intake"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "/**\n * n8n Code node - Azure DevOps Service Hook receiver.\n *\n * Configure an ADO Service Hook: Project Settings > Service Hooks > Create subscription\n *   Trigger: \"Work item updated\"\n *   Filters: Work item type = Bug OR Product Backlog Item (create two subscriptions,\n *            one per type, both pointing at this same webhook)\n *            Optionally filter on \"State\" = your trigger state (e.g. \"Ready for Dev\")\n *   Action:  Web Hooks -> URL of this n8n webhook node\n *\n * Normalizes the ADO payload into a BugIntakePayload or PbiIntakePayload and POSTs it\n * to the orchestrator's /runs/start. Does not poll for completion; approvals happen\n * via the dashboard (this same workflow) or chat commands.\n */\n\nconst CONFIG = {\n  ORCHESTRATOR_URL: 'http://127.0.0.1:4400',\n  ORCHESTRATOR_API_KEY: '',\n  TRIGGER_STATES: ['ready for dev', 'approved'],\n};\n\nconst ORCHESTRATOR_URL = ($env.ORCHESTRATOR_URL || CONFIG.ORCHESTRATOR_URL || 'http://127.0.0.1:4400').replace(/\\/$/, '');\nconst API_KEY = $env.ORCHESTRATOR_API_KEY || CONFIG.ORCHESTRATOR_API_KEY;\nconst ADO_ORG = $env.ADO_ORG || '';\n\nfunction stripHtml(html) {\n  return String(html || '')\n    .replace(/<br\\s*\\/?>/gi, '\\n')\n    .replace(/<\\/p>/gi, '\\n\\n')\n    .replace(/<[^>]+>/g, '')\n    .replace(/&nbsp;/g, ' ')\n    .replace(/&amp;/g, '&')\n    .replace(/&lt;/g, '<')\n    .replace(/&gt;/g, '>')\n    .replace(/\\n{3,}/g, '\\n\\n')\n    .trim();\n}\n\nfunction normalizeComponent(areaPath) {\n  const v = String(areaPath || '').toLowerCase();\n  if (v.includes('frontend') || v.includes('ui') || v.includes('client')) return 'frontend';\n  if (v.includes('backend') || v.includes('api') || v.includes('server')) return 'backend';\n  return 'unknown';\n}\n\nfunction severityFromAdoSeverity(sev) {\n  const v = String(sev || '').toLowerCase();\n  if (v.includes('1') || v.includes('critical')) return 'critical';\n  if (v.includes('2') || v.includes('high')) return 'high';\n  if (v.includes('3') || v.includes('medium')) return 'medium';\n  return v.includes('4') || v.includes('low') ? 'low' : 'medium';\n}\n\nfunction reply(json) {\n  return [{ json }];\n}\n\nconst body = $input.first().json ?? {};\nconst eventType = body.eventType || '';\nconst resource = body.resource || {};\nconst fields = resource.revision?.fields || resource.fields || {};\n\nfunction fieldValue(name) {\n  const v = fields[name];\n  if (v && typeof v === 'object' && 'newValue' in v) return v.newValue;\n  return v;\n}\n\nconst workItemId = resource.workItemId || resource.id;\nconst workItemType = String(fieldValue('System.WorkItemType') || '').trim();\nconst title = String(fieldValue('System.Title') || '').trim();\nconst state = String(fieldValue('System.State') || '').trim();\n\nif (!workItemId || !workItemType || !title) {\n  return reply({ ok: false, message: `Ignored event (eventType=${eventType}): missing workItemId/workItemType/title.` });\n}\n\nif (CONFIG.TRIGGER_STATES.length > 0 && !CONFIG.TRIGGER_STATES.includes(state.toLowerCase())) {\n  return reply({ ok: true, skipped: true, reason: `State '${state}' not in TRIGGER_STATES`, workItemId });\n}\n\nif (!API_KEY) {\n  return reply({ ok: false, message: 'Missing ORCHESTRATOR_API_KEY - set automation/n8n-local/.env or CONFIG.ORCHESTRATOR_API_KEY.' });\n}\n\nconst project = body.resourceContainers?.project?.baseUrl\n  ? decodeURIComponent(String(body.resourceContainers.project.baseUrl).split('/').filter(Boolean).pop() || '')\n  : (resource.teamProject || '');\nconst org = ADO_ORG || (body.resourceContainers?.account?.baseUrl\n  ? String(body.resourceContainers.account.baseUrl).replace(/https?:\\/\\//, '').split('.')[0]\n  : '');\n\nconst workItemUrl = resource._links?.html?.href\n  || `https://dev.azure.com/${org}/${encodeURIComponent(project)}/_workitems/edit/${workItemId}`;\n\nconst adoRef = {\n  workItemId: Number(workItemId),\n  workItemType,\n  workItemUrl,\n  organization: org,\n  project,\n  areaPath: fieldValue('System.AreaPath'),\n  iterationPath: fieldValue('System.IterationPath'),\n  tags: String(fieldValue('System.Tags') || '').split(';').map((t) => t.trim()).filter(Boolean),\n  state,\n};\n\nconst assignedToRaw = fieldValue('System.AssignedTo');\nconst assignedTo = assignedToRaw\n  ? {\n      email: typeof assignedToRaw === 'object' ? (assignedToRaw.uniqueName || assignedToRaw.email || '') : '',\n      name: typeof assignedToRaw === 'object' ? (assignedToRaw.displayName || '') : String(assignedToRaw),\n    }\n  : undefined;\n\nconst reporterEmail = assignedTo?.email || 'ado-webhook@example.com';\nconst now = new Date().toISOString();\nconst rev = resource.rev || resource.revision?.rev || 0;\nconst messageId = `ado-${workItemId}-rev${rev}@${org || 'ado'}`;\n\nconst isBug = workItemType.toLowerCase() === 'bug';\n\nconst payload = isBug\n  ? {\n      contractVersion: '1.1.0',\n      type: 'bug',\n      source: 'ado',\n      messageId,\n      receivedAt: now,\n      reporter: { email: reporterEmail, name: assignedTo?.name },\n      bug: {\n        title: title.slice(0, 200),\n        description: stripHtml(fieldValue('System.Description')).slice(0, 8000) || title,\n        severity: severityFromAdoSeverity(fieldValue('Microsoft.VSTS.Common.Severity')),\n        component: normalizeComponent(adoRef.areaPath),\n        environment: 'ado',\n      },\n      metadata: { emailSubject: `[ADO Bug #${workItemId}] ${title}`, labels: ['ado', ...adoRef.tags], ado: adoRef },\n    }\n  : {\n      contractVersion: '1.1.0',\n      type: 'pbi',\n      source: 'ado',\n      messageId,\n      receivedAt: now,\n      reporter: { email: reporterEmail, name: assignedTo?.name },\n      ado: adoRef,\n      pbi: {\n        title: title.slice(0, 200),\n        description: stripHtml(fieldValue('System.Description')).slice(0, 20000) || title,\n        acceptanceCriteria: stripHtml(fieldValue('Microsoft.VSTS.Common.AcceptanceCriteria')) || undefined,\n        storyPoints: fieldValue('Microsoft.VSTS.Scheduling.StoryPoints') ? Number(fieldValue('Microsoft.VSTS.Scheduling.StoryPoints')) : undefined,\n        priority: fieldValue('Microsoft.VSTS.Common.Priority') ? Number(fieldValue('Microsoft.VSTS.Common.Priority')) : undefined,\n        assignedTo,\n      },\n      metadata: { adoEventType: eventType, labels: ['ado', ...adoRef.tags] },\n    };\n\ntry {\n  const started = await this.helpers.httpRequest({\n    method: 'POST',\n    url: `${ORCHESTRATOR_URL}/runs/start`,\n    headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json', Accept: 'application/json' },\n    body: payload,\n    json: true,\n    timeout: 30000,\n  });\n\n  return reply({\n    ok: true,\n    runId: started.runId,\n    status: started.status,\n    type: started.type,\n    branchName: started.branchName,\n    workItemId,\n    message: `Started ${isBug ? 'bug-fix' : 'PBI'} run ${started.runId} for ADO work item #${workItemId}.`,\n  });\n} catch (err) {\n  const status = err.statusCode ?? err.response?.statusCode ?? 'unknown';\n  const errBody = err.response?.body ?? err.response?.data ?? err.message;\n  if (status === 409) {\n    return reply({ ok: true, skipped: true, reason: 'Run already exists for this work item revision', workItemId });\n  }\n  return reply({ ok: false, message: `Orchestrator error (HTTP ${status}): ${JSON.stringify(errBody)}`, workItemId });\n}\n"
+      },
+      "id": "ado-process-001",
+      "name": "Process ADO webhook",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 80]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": { "responseCode": 200 }
+      },
+      "id": "ado-respond-001",
+      "name": "Respond to ADO",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 80]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "orchestrator-deploy-trigger",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "deploy-trigger-001",
+      "name": "Orchestrator Event",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 280],
+      "webhookId": "orchestrator-deploy-trigger"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "/**\n * n8n Code node - staging deploy trigger + poll, driven by the orchestrator's\n * outbound webhook events (N8N_EVENT_WEBHOOK_URL in automation/orchestrator/.env or .env.pci).\n * Only acts on event === \"pr.created\". Dispatches a GitHub Actions workflow, polls until\n * it finishes, then reports the result back via POST /runs/:id/deploy-status.\n *\n * Adapting to Azure Pipelines: replace the two githubRequest calls with the Azure Pipelines\n * REST API (POST .../_apis/pipelines/{pipelineId}/runs to start, GET .../runs/{runId} to poll).\n */\n\nconst CONFIG = {\n  ORCHESTRATOR_URL: 'http://127.0.0.1:4400',\n  ORCHESTRATOR_API_KEY: '',\n  GITHUB_TOKEN: '',\n  GITHUB_OWNER: 'Hishitha-GJ',\n  GITHUB_REPO: 'react_project_Health_Insurance_Claim_Management',\n  GITHUB_DEPLOY_WORKFLOW_FILE: 'deploy-staging.yml',\n  STAGING_ENVIRONMENT: 'staging',\n  STAGING_URL_TEMPLATE: '',\n  MAX_POLL_ATTEMPTS: 180,\n  POLL_INTERVAL_MS: 10000,\n};\n\nconst ORCHESTRATOR_URL = ($env.ORCHESTRATOR_URL || CONFIG.ORCHESTRATOR_URL).replace(/\\/$/, '');\nconst API_KEY = $env.ORCHESTRATOR_API_KEY || CONFIG.ORCHESTRATOR_API_KEY;\nconst GITHUB_TOKEN = $env.GITHUB_TOKEN || CONFIG.GITHUB_TOKEN;\nconst GITHUB_OWNER = $env.GITHUB_OWNER || CONFIG.GITHUB_OWNER;\nconst GITHUB_REPO = $env.GITHUB_REPO || CONFIG.GITHUB_REPO;\n\nfunction reply(json) { return [{ json }]; }\n\nasync function orchestratorRequest(method, path, body) {\n  return this.helpers.httpRequest({\n    method, url: `${ORCHESTRATOR_URL}${path}`,\n    headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json', Accept: 'application/json' },\n    body, json: true, timeout: 30000,\n  });\n}\n\nasync function githubRequest(method, path, body) {\n  return this.helpers.httpRequest({\n    method, url: `https://api.github.com${path}`,\n    headers: { Authorization: `Bearer ${GITHUB_TOKEN}`, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json', 'User-Agent': 'sdlc-orchestrator-n8n', 'X-GitHub-Api-Version': '2022-11-28' },\n    body, json: true, timeout: 30000, returnFullResponse: true,\n  });\n}\n\nconst event = $input.first().json ?? {};\n\nif (event.event !== 'pr.created') {\n  return reply({ ok: true, skipped: true, reason: `Ignoring event '${event.event}'` });\n}\nif (!API_KEY || !GITHUB_TOKEN) {\n  return reply({ ok: false, message: 'Missing ORCHESTRATOR_API_KEY or GITHUB_TOKEN in node config / n8n env. (For Azure Repos targets, adapt this node to Azure Pipelines instead.)' });\n}\n\nconst { runId, branchName } = event;\nif (!runId || !branchName) {\n  return reply({ ok: false, message: 'Event payload missing runId/branchName.' });\n}\n\ntry {\n  await orchestratorRequest.call(this, 'POST', `/runs/${runId}/deploy-status`, {\n    status: 'in_progress', environment: CONFIG.STAGING_ENVIRONMENT, note: `Dispatching ${CONFIG.GITHUB_DEPLOY_WORKFLOW_FILE} on ${branchName}`,\n  });\n\n  await githubRequest.call(this, 'POST', `/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${CONFIG.GITHUB_DEPLOY_WORKFLOW_FILE}/dispatches`, { ref: branchName });\n\n  let runsList;\n  for (let findAttempt = 0; findAttempt < 6; findAttempt++) {\n    await new Promise((r) => setTimeout(r, 3000));\n    runsList = await githubRequest.call(this, 'GET', `/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${CONFIG.GITHUB_DEPLOY_WORKFLOW_FILE}/runs?branch=${encodeURIComponent(branchName)}&per_page=1`);\n    if (runsList.body?.workflow_runs?.length > 0) break;\n  }\n\n  const run = runsList?.body?.workflow_runs?.[0];\n  if (!run) {\n    await orchestratorRequest.call(this, 'POST', `/runs/${runId}/deploy-status`, { status: 'failed', note: 'Dispatched workflow but could not find the resulting run.' });\n    return reply({ ok: false, runId, message: 'Workflow dispatched but run not found after 18s.' });\n  }\n\n  const pipelineRunUrl = run.html_url;\n  let conclusion = run.conclusion;\n  let currentRunId = run.id;\n\n  for (let attempt = 0; attempt < CONFIG.MAX_POLL_ATTEMPTS && !conclusion; attempt++) {\n    await new Promise((r) => setTimeout(r, CONFIG.POLL_INTERVAL_MS));\n    const check = await githubRequest.call(this, 'GET', `/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/runs/${currentRunId}`);\n    conclusion = check.body?.conclusion;\n  }\n\n  const succeeded = conclusion === 'success';\n  await orchestratorRequest.call(this, 'POST', `/runs/${runId}/deploy-status`, {\n    status: succeeded ? 'succeeded' : 'failed', environment: CONFIG.STAGING_ENVIRONMENT, url: CONFIG.STAGING_URL_TEMPLATE || undefined, pipelineRunUrl, note: conclusion ? `Workflow conclusion: ${conclusion}` : 'Timed out waiting for workflow to finish.',\n  });\n\n  return reply({ ok: true, runId, deployStatus: succeeded ? 'succeeded' : 'failed', pipelineRunUrl, message: `Deploy ${succeeded ? 'succeeded' : 'failed'} for run ${runId} (${branchName}).` });\n} catch (err) {\n  const status = err.statusCode ?? err.response?.statusCode ?? 'unknown';\n  const message = `Deploy trigger/poll error (HTTP ${status}): ${err.message}`;\n  try {\n    await orchestratorRequest.call(this, 'POST', `/runs/${runId}/deploy-status`, { status: 'failed', note: message });\n  } catch { /* best-effort */ }\n  return reply({ ok: false, runId, message });\n}\n"
+      },
+      "id": "deploy-process-001",
+      "name": "Trigger and poll deploy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 280]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "deploy-respond-001",
+      "name": "Respond to Orchestrator",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 280]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "sdlc/dashboard",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "dash-get-001",
+      "name": "GET Dashboard",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 500],
+      "webhookId": "sdlc-dashboard-get"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "var SCRIPT = [\n'var Q = String.fromCharCode(39);',\n'var ACTION_URL = location.origin + \"/webhook/sdlc/action\";',\n'function $(id){ return document.getElementById(id); }',\n'function esc(s){ return String(s==null?\"\":s).replace(/&/g,\"&amp;\").replace(/</g,\"&lt;\").replace(/>/g,\"&gt;\"); }',\n'function badge(s){ var prog=[\"queued\",\"analyzing\",\"patch_created\",\"validating\",\"planning\",\"plan_approved\",\"coding\",\"test_generation\",\"doc_update\",\"deploying\"]; var wait=[\"awaiting_plan_approval\",\"awaiting_approval\",\"awaiting_uat\"]; var good=[\"approved\",\"pr_created\",\"deployed\",\"released\"]; var bad=[\"rejected\",\"failed\"]; var cls=\"badge-gray\"; if(prog.indexOf(s)!==-1)cls=\"badge-blue\"; else if(wait.indexOf(s)!==-1)cls=\"badge-purple\"; else if(good.indexOf(s)!==-1)cls=\"badge-green\"; else if(bad.indexOf(s)!==-1)cls=\"badge-red\"; return \"<span class=\"+Q+\"badge \"+cls+Q+\">\"+esc(s||\"unknown\")+\"</span>\"; }',\n'async function callAction(body){ var r=await fetch(ACTION_URL,{method:\"POST\",headers:{\"Content-Type\":\"application/json\"},body:JSON.stringify(body)}); var t=await r.text(); try{ return JSON.parse(t); }catch(e){ return { response:t }; } }',\n'function showResult(id,text,isErr){ $(id).innerHTML=\"<div class=\"+Q+\"result-box\"+(isErr?\" err\":\"\")+Q+\">\"+esc(text)+\"</div>\"; }',\n'document.querySelectorAll(\".tab\").forEach(function(btn){ btn.addEventListener(\"click\", function(){ document.querySelectorAll(\".tab\").forEach(function(t){ t.classList.remove(\"active\"); }); document.querySelectorAll(\".pane\").forEach(function(p){ p.classList.remove(\"active\"); }); btn.classList.add(\"active\"); $(\"pane-\"+btn.dataset.tab).classList.add(\"active\"); }); });',\n'function switchTab(name){ document.querySelectorAll(\".tab\").forEach(function(b){ if(b.dataset.tab===name) b.click(); }); }',\n'document.querySelectorAll(\"input[name=witype]\").forEach(function(r){ r.addEventListener(\"change\", function(){ var isPbi = document.querySelector(\"input[name=witype]:checked\").value === \"pbi\"; $(\"bugFields\").style.display = isPbi ? \"none\" : \"block\"; $(\"pbiFields\").style.display = isPbi ? \"block\" : \"none\"; }); });',\n'$(\"submitBtn\").addEventListener(\"click\", async function(){ var isPbi = document.querySelector(\"input[name=witype]:checked\").value === \"pbi\"; var payload = { action:\"start\", workItemType: isPbi ? \"pbi\" : \"bug\" }; if(isPbi){ payload.title = $(\"pbiTitle\").value.trim(); payload.description = $(\"pbiDesc\").value.trim(); payload.acceptanceCriteria = $(\"pbiAC\").value.trim(); payload.storyPoints = $(\"pbiSP\").value ? Number($(\"pbiSP\").value) : undefined; if(!payload.title || !payload.description){ showResult(\"reportResult\",\"Title and description are required.\",true); return; } } else { payload.message = $(\"bugText\").value.trim(); if(!payload.message){ showResult(\"reportResult\",\"Bug report text is required.\",true); return; } } var btn = $(\"submitBtn\"); btn.disabled = true; btn.textContent = \"Starting...\"; showResult(\"reportResult\",\"\"); try{ var res = await callAction(payload); var isErr = !res.runId; showResult(\"reportResult\", res.response || JSON.stringify(res), isErr); if(res.runId){ $(\"trackId\").value = res.runId; $(\"approveId\").value = res.runId; setTimeout(function(){ switchTab(\"track\"); doCheckStatus(res.runId); $(\"autoRefresh\").checked = true; $(\"autoRefresh\").dispatchEvent(new Event(\"change\")); }, 800); } }catch(e){ showResult(\"reportResult\",\"Error: \"+e.message,true); }finally{ btn.disabled=false; btn.textContent=\"Start run\"; } });',\n'function renderStatusCard(run){ var a=run.analysis||{}; var v=run.validation||{}; var g=run.git||{}; var p=run.plan; var u=run.uat; var files=a.changedFiles||[]; var html = \"<div class=\"+Q+\"card\"+Q+\">\"; html += \"<div class=\"+Q+\"row\"+Q+\">\"+badge(run.status)+\"<strong>\"+esc(g.branchName||\"n/a\")+\"</strong><span class=\"+Q+\"meta\"+Q+\">\"+esc(run.runId)+\"</span></div>\"; if(p) html += \"<div class=\"+Q+\"card-title\"+Q+\">Plan</div><p style=\"+Q+\"font-size:.85rem\"+Q+\">\"+p.taskCount+\" task(s), ~\"+p.estimatedTotalLoc+\" LOC</p>\"; if(a.bugSummary) html += \"<div class=\"+Q+\"card-title\"+Q+\">Summary</div><p style=\"+Q+\"font-size:.85rem\"+Q+\">\"+esc(a.bugSummary)+\"</p>\"; if(files.length>0){ html += \"<div class=\"+Q+\"card-title\"+Q+\">Changed files (\"+files.length+\")</div><ul class=\"+Q+\"files\"+Q+\">\"+files.map(function(f){return \"<li>\"+esc(f)+\"</li>\";}).join(\"\")+\"</ul>\"; } if(v.passed!==undefined){ html += \"<div class=\"+Q+\"card-title\"+Q+\">Validation</div><p style=\"+Q+\"font-size:.85rem\"+Q+\">Build: \"+(v.buildPassed?\"passed\":\"failed\")+\" | Tests: \"+(v.testsPassed?\"passed\":\"issues\")+\"</p>\"; if(v.failureReason) html += \"<p style=\"+Q+\"font-size:.8rem;color:#e74266\"+Q+\">\"+esc(v.failureReason)+\"</p>\"; } if(u && u.status && u.status!==\"not_applicable\") html += \"<div class=\"+Q+\"card-title\"+Q+\">UAT</div><p style=\"+Q+\"font-size:.85rem\"+Q+\">\"+esc(u.status)+\"</p>\"; if(g.prUrl) html += \"<div class=\"+Q+\"card-title\"+Q+\">Pull Request</div><a href=\"+Q+esc(g.prUrl)+Q+\" target=\"+Q+\"_blank\"+Q+\">\"+esc(g.prUrl)+\"</a>\"; if(run.error) html += \"<p style=\"+Q+\"margin-top:.6rem;color:#dc2626;font-size:.82rem\"+Q+\">\"+esc(run.error.code)+\": \"+esc(run.error.message)+\"</p>\"; var GATE=[\"awaiting_plan_approval\",\"awaiting_approval\",\"awaiting_uat\"]; if(GATE.indexOf(run.status)!==-1) html += \"<p style=\"+Q+\"margin-top:.7rem;font-size:.83rem;color:#6d28d9\"+Q+\">Ready for review - use the Approve tab with this Run ID.</p>\"; html += \"</div>\"; return html; }',\n'var autoTimer=null, countdown=15;',\n'async function doCheckStatus(runId){ if(!runId) return; $(\"checkBtn\").disabled=true; try{ var res = await callAction({ action:\"status\", runId: runId }); if(res.run){ $(\"statusCard\").innerHTML = renderStatusCard(res.run); var TERMINAL=[\"approved\",\"rejected\",\"pr_created\",\"failed\",\"released\"]; if(TERMINAL.indexOf(res.run.status)!==-1){ $(\"autoRefresh\").checked=false; $(\"autoRefresh\").dispatchEvent(new Event(\"change\")); } } else { $(\"statusCard\").innerHTML = \"<div class=\"+Q+\"result-box err\"+Q+\">\"+esc(res.response||JSON.stringify(res))+\"</div>\"; } }catch(e){ $(\"statusCard\").innerHTML = \"<div class=\"+Q+\"result-box err\"+Q+\">Network error: \"+esc(e.message)+\"</div>\"; }finally{ $(\"checkBtn\").disabled=false; } }',\n'$(\"checkBtn\").addEventListener(\"click\", function(){ var id=$(\"trackId\").value.trim(); if(!id) return; clearInterval(autoTimer); countdown=15; doCheckStatus(id); });',\n'$(\"autoRefresh\").addEventListener(\"change\", function(){ clearInterval(autoTimer); autoTimer=null; if($(\"autoRefresh\").checked){ countdown=15; autoTimer=setInterval(function(){ countdown--; if(countdown<=0){ countdown=15; var id=$(\"trackId\").value.trim(); if(id) doCheckStatus(id); } },1000); } });',\n'function renderApprovePanel(run){ var html = \"<div class=\"+Q+\"card\"+Q+\">\"+badge(run.status)+\" <strong>\"+esc(run.runId)+\"</strong></div>\"; if(run.status===\"awaiting_plan_approval\"){ html += \"<div class=\"+Q+\"card\"+Q+\"><div class=\"+Q+\"card-title\"+Q+\">Plan review (Gate 1)</div>\"; html += \"<div class=\"+Q+\"actions\"+Q+\"><button class=\"+Q+\"btn btn-secondary\"+Q+\" data-act=\"+Q+\"view-plan\"+Q+\">View plan</button></div>\"; html += \"<div id=\"+Q+\"planText\"+Q+\"></div>\"; html += \"<label for=\"+Q+\"approveComment\"+Q+\">Comment</label><input id=\"+Q+\"approveComment\"+Q+\"/>\"; html += \"<div class=\"+Q+\"actions\"+Q+\"><button class=\"+Q+\"btn btn-success\"+Q+\" data-act=\"+Q+\"approve-plan\"+Q+\">Approve plan</button><button class=\"+Q+\"btn btn-danger\"+Q+\" data-act=\"+Q+\"reject-plan\"+Q+\">Reject plan</button></div></div>\"; } else if(run.status===\"awaiting_approval\"){ html += \"<div class=\"+Q+\"card\"+Q+\"><div class=\"+Q+\"card-title\"+Q+\">Patch review (Gate 2)</div>\"; html += \"<label for=\"+Q+\"approveComment\"+Q+\">Comment</label><input id=\"+Q+\"approveComment\"+Q+\"/>\"; html += \"<div class=\"+Q+\"toggle-row\"+Q+\"><input type=\"+Q+\"checkbox\"+Q+\" id=\"+Q+\"createPrToggle\"+Q+\"/><label for=\"+Q+\"createPrToggle\"+Q+\" style=\"+Q+\"margin:0;font-weight:400\"+Q+\">Create PR immediately (bug runs)</label></div>\"; html += \"<div class=\"+Q+\"actions\"+Q+\"><button class=\"+Q+\"btn btn-success\"+Q+\" data-act=\"+Q+\"approve\"+Q+\">Approve</button><button class=\"+Q+\"btn btn-danger\"+Q+\" data-act=\"+Q+\"reject\"+Q+\">Reject</button></div></div>\"; } else if(run.status===\"awaiting_uat\"){ html += \"<div class=\"+Q+\"card\"+Q+\"><div class=\"+Q+\"card-title\"+Q+\">UAT review</div>\"; html += \"<label for=\"+Q+\"approveComment\"+Q+\">Comment</label><input id=\"+Q+\"approveComment\"+Q+\"/>\"; html += \"<div class=\"+Q+\"actions\"+Q+\"><button class=\"+Q+\"btn btn-success\"+Q+\" data-act=\"+Q+\"uat-approve\"+Q+\">UAT approve and release</button><button class=\"+Q+\"btn btn-danger\"+Q+\" data-act=\"+Q+\"uat-reject\"+Q+\">UAT reject</button></div></div>\"; } else if(run.status===\"approved\"){ html += \"<div class=\"+Q+\"card\"+Q+\"><div class=\"+Q+\"card-title\"+Q+\">Ready for PR</div><div class=\"+Q+\"actions\"+Q+\"><button class=\"+Q+\"btn btn-primary\"+Q+\" data-act=\"+Q+\"create-pr\"+Q+\">Create PR</button></div></div>\"; } else { html += \"<p class=\"+Q+\"hint\"+Q+\" style=\"+Q+\"margin-top:.5rem\"+Q+\">No action required for status: \"+esc(run.status)+\"</p>\"; } var CANCELABLE=[\"queued\",\"analyzing\",\"patch_created\",\"validating\",\"planning\",\"coding\",\"test_generation\",\"doc_update\"]; if(CANCELABLE.indexOf(run.status)!==-1) html += \"<div class=\"+Q+\"actions\"+Q+\"><button class=\"+Q+\"btn btn-secondary\"+Q+\" data-act=\"+Q+\"cancel\"+Q+\">Cancel run</button></div>\"; return html; }',\n'$(\"loadBtn\").addEventListener(\"click\", async function(){ var id=$(\"approveId\").value.trim(); if(!id) return; $(\"approvePanel\").innerHTML=\"<p class=\"+Q+\"hint\"+Q+\">Loading...</p>\"; $(\"approveResult\").innerHTML=\"\"; try{ var res = await callAction({ action:\"status\", runId:id }); if(res.run) $(\"approvePanel\").innerHTML = renderApprovePanel(res.run); else $(\"approvePanel\").innerHTML = \"<div class=\"+Q+\"result-box\"+Q+\">\"+esc(res.response||\"\")+\"</div>\"; }catch(e){ $(\"approvePanel\").innerHTML = \"<div class=\"+Q+\"result-box err\"+Q+\">\"+esc(e.message)+\"</div>\"; } });',\n'$(\"approvePanel\").addEventListener(\"click\", async function(ev){ var act = ev.target && ev.target.dataset ? ev.target.dataset.act : null; if(!act) return; var id=$(\"approveId\").value.trim(); if(!id) return; var commentEl=$(\"approveComment\"); var comment = commentEl ? commentEl.value.trim() : \"\"; if(act===\"view-plan\"){ var r = await callAction({ action:\"view-plan\", runId:id }); var box = $(\"planText\"); if(box) box.innerHTML = \"<div class=\"+Q+\"result-box\"+Q+\">\"+esc(r.response||\"\")+\"</div>\"; return; } var body = { action:act, runId:id, comment:comment }; if(act===\"approve\") body.createPr = $(\"createPrToggle\") ? $(\"createPrToggle\").checked : false; ev.target.disabled = true; try{ var res = await callAction(body); showResult(\"approveResult\", res.response || JSON.stringify(res), false); var LOAD_AGAIN=[\"approve-plan\",\"reject-plan\",\"approve\",\"reject\",\"uat-approve\",\"uat-reject\",\"cancel\"]; if(LOAD_AGAIN.indexOf(act)!==-1) $(\"loadBtn\").click(); }catch(e){ showResult(\"approveResult\",\"Error: \"+e.message,true); }finally{ ev.target.disabled=false; } });',\n'(async function(){ try{ var res = await callAction({ action:\"health\" }); if(res.online){ $(\"orchDot\").className=\"dot ok\"; $(\"orchLabel\").textContent=\"Orchestrator: online\"; } else { $(\"orchDot\").className=\"dot err\"; $(\"orchLabel\").textContent=res.response || \"Orchestrator: offline\"; } }catch(e){ $(\"orchDot\").className=\"dot err\"; $(\"orchLabel\").textContent=\"Orchestrator: offline\"; } })();'\n].join(\"\");\nconst HTML = '<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/><title>SDLC Automation</title><style>' +\n':root{--bg:#f0f2f8;--surface:#fff;--border:#dde1ee;--text:#1a1a2e;--muted:#5a6080;--accent:#5c4ee5;--accent-dark:#4338ca;--danger:#e74266;--success:#16a34a;font-family:system-ui,-apple-system,sans-serif;color:var(--text);background:var(--bg)}' +\n'*{box-sizing:border-box;margin:0;padding:0}body{min-height:100vh}' +\n'header{background:var(--surface);border-bottom:1px solid var(--border);padding:.75rem 1.5rem;display:flex;align-items:center;gap:.75rem}' +\n'header h1{font-size:1.15rem;font-weight:700}' +\n'.orch{display:flex;align-items:center;gap:.4rem;font-size:.8rem;color:var(--muted);margin-left:auto}' +\n'.dot{width:8px;height:8px;border-radius:50%;background:#9ca3af}.dot.ok{background:#22c55e}.dot.err{background:#ef4444}' +\n'main{max-width:820px;margin:0 auto;padding:1.5rem 1rem}' +\n'.tabs{display:flex;gap:2px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:4px;margin-bottom:1.5rem}' +\n'.tab{flex:1;padding:.55rem .5rem;border:none;background:none;cursor:pointer;border-radius:7px;font:inherit;font-size:.88rem;font-weight:500;color:var(--muted)}' +\n'.tab:hover{background:var(--bg)}.tab.active{background:var(--accent);color:#fff}' +\n'.pane{display:none}.pane.active{display:block}' +\n'label{display:block;font-size:.82rem;font-weight:600;color:var(--muted);margin:1rem 0 .3rem}' +\n'input,select,textarea{width:100%;padding:.55rem .7rem;border:1.5px solid var(--border);border-radius:7px;font:inherit;font-size:.9rem;background:var(--surface)}' +\n'input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}textarea{min-height:120px;resize:vertical}' +\n'.hint{font-size:.78rem;color:var(--muted);margin-top:.25rem}' +\n'.btn{display:inline-flex;align-items:center;gap:.4rem;padding:.6rem 1.2rem;border:none;border-radius:7px;font:inherit;font-size:.88rem;font-weight:600;cursor:pointer}' +\n'.btn:disabled{opacity:.5;cursor:wait}' +\n'.btn-primary{background:var(--accent);color:#fff}.btn-primary:hover:not(:disabled){background:var(--accent-dark)}' +\n'.btn-success{background:var(--success);color:#fff}.btn-success:hover:not(:disabled){background:#15803d}' +\n'.btn-danger{background:var(--danger);color:#fff}.btn-danger:hover:not(:disabled){background:#cf3c5c}' +\n'.btn-secondary{background:var(--bg);color:var(--text);border:1.5px solid var(--border)}' +\n'.actions{display:flex;gap:.6rem;flex-wrap:wrap;margin-top:1rem}' +\n'.card{background:var(--surface);border:1.5px solid var(--border);border-radius:10px;padding:1rem 1.2rem;margin-top:1rem}' +\n'.card-title{font-size:.8rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:.5rem}' +\n'.badge{display:inline-block;padding:.2rem .55rem;border-radius:99px;font-size:.75rem;font-weight:600}' +\n'.badge-blue{background:#dbeafe;color:#1d4ed8}.badge-purple{background:#ede9fe;color:#6d28d9}' +\n'.badge-green{background:#dcfce7;color:#16a34a}.badge-red{background:#fee2e2;color:#dc2626}.badge-gray{background:#f3f4f6;color:#374151}' +\n'.row{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;margin-bottom:.6rem}' +\n'.meta{font-size:.8rem;color:var(--muted)}.files{list-style:none;margin-top:.4rem}' +\n'.files li{font-size:.82rem;padding:.15rem 0;font-family:ui-monospace,monospace;color:var(--muted)}' +\n'.result-box{background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:.85rem 1rem;font-family:ui-monospace,monospace;font-size:.8rem;white-space:pre-wrap;max-height:360px;overflow-y:auto;margin-top:1rem;border-left:3px solid var(--accent)}' +\n'.result-box.err{border-left-color:var(--danger)}' +\n'.toggle-row{display:flex;align-items:center;gap:.5rem;font-size:.85rem;margin-top:.75rem}.toggle-row input{width:auto}' +\n'.witype{display:flex;gap:1.2rem;margin-top:.5rem;font-size:.88rem}.witype label{display:flex;align-items:center;gap:.35rem;font-weight:500;margin:0;color:var(--text)}.witype input{width:auto}' +\n'.spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .6s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}' +\n'</style></head><body>' +\n'<header><span style=\"font-size:1.3rem\">SDLC</span><h1>SDLC Automation</h1><div class=\"orch\"><div class=\"dot\" id=\"orchDot\"></div><span id=\"orchLabel\">Orchestrator</span></div></header>' +\n'<main><nav class=\"tabs\">' +\n'<button class=\"tab active\" data-tab=\"report\">Report</button>' +\n'<button class=\"tab\" data-tab=\"track\">Track</button>' +\n'<button class=\"tab\" data-tab=\"approve\">Approve</button>' +\n'</nav>' +\n'<div id=\"pane-report\" class=\"pane active\">' +\n'<div class=\"witype\"><label><input type=\"radio\" name=\"witype\" value=\"bug\" checked/> Bug</label><label><input type=\"radio\" name=\"witype\" value=\"pbi\"/> PBI / User Story</label></div>' +\n'<div id=\"bugFields\">' +\n'<label for=\"bugText\">Bug report</label>' +\n'<textarea id=\"bugText\" placeholder=\"[BUG] Title here&#10;component: frontend&#10;area: path/to/file.tsx&#10;severity: medium&#10;&#10;Describe the problem.\"></textarea>' +\n'<p class=\"hint\">First line: [BUG] Title. Optional tags: component: frontend/backend/fullstack, area: file path, severity: low/medium/high/critical</p>' +\n'</div>' +\n'<div id=\"pbiFields\" style=\"display:none\">' +\n'<label for=\"pbiTitle\">Title</label><input id=\"pbiTitle\" placeholder=\"Add saved-search export to CSV\"/>' +\n'<label for=\"pbiDesc\">Description</label><textarea id=\"pbiDesc\" placeholder=\"What should this deliver and why?\"></textarea>' +\n'<label for=\"pbiAC\">Acceptance criteria</label><textarea id=\"pbiAC\" placeholder=\"Given / When / Then...\"></textarea>' +\n'<label for=\"pbiSP\">Story points (optional)</label><input id=\"pbiSP\" type=\"number\" min=\"0\"/>' +\n'</div>' +\n'<div class=\"actions\"><button class=\"btn btn-primary\" id=\"submitBtn\">Start run</button></div>' +\n'<div id=\"reportResult\"></div></div>' +\n'<div id=\"pane-track\" class=\"pane\">' +\n'<label for=\"trackId\">Run ID</label>' +\n'<div class=\"row\"><input id=\"trackId\" placeholder=\"run_20260618_160000_abc123\" style=\"flex:1\"/><button class=\"btn btn-primary\" id=\"checkBtn\">Check</button></div>' +\n'<div class=\"toggle-row\"><input type=\"checkbox\" id=\"autoRefresh\"/><label for=\"autoRefresh\" style=\"margin:0;font-weight:400\">Auto-refresh every 15s</label></div>' +\n'<div id=\"statusCard\"></div></div>' +\n'<div id=\"pane-approve\" class=\"pane\">' +\n'<label for=\"approveId\">Run ID</label>' +\n'<div class=\"row\"><input id=\"approveId\" placeholder=\"run_...\" style=\"flex:1\"/><button class=\"btn btn-secondary\" id=\"loadBtn\">Load</button></div>' +\n'<div id=\"approvePanel\"></div>' +\n'<div id=\"approveResult\"></div></div>' +\n'</main>' +\n'<script>' +\nSCRIPT +\n'</script></body></html>';\nreturn [{ json: { html: HTML } }];"
+      },
+      "id": "dash-build-001",
+      "name": "Build Dashboard Page",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 500]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html }}",
+        "options": { "responseHeaders": { "entries": [{ "name": "Content-Type", "value": "text/html; charset=utf-8" }] } }
+      },
+      "id": "dash-respond-html-001",
+      "name": "Respond Dashboard HTML",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [720, 500]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "sdlc/action",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "dash-post-001",
+      "name": "POST Dashboard Action",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 760],
+      "webhookId": "sdlc-dashboard-action"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "function unwrap(raw){if(!raw||typeof raw!=='object')return{message:String(raw==null?'':raw)};if(raw.body!=null){if(typeof raw.body==='string'){try{return JSON.parse(raw.body);}catch(e){return{message:raw.body};}}if(typeof raw.body==='object'&&!Array.isArray(raw.body))return raw.body;}return raw;}\nconst ALLOWED=['start','status','view-plan','approve-plan','reject-plan','approve','reject','create-pr','uat-approve','uat-reject','cancel','health'];\nconst raw=$input.first().json||{};\nconst p=unwrap(raw);\nconst action=String(p.action||'start').toLowerCase().trim();\nconst runId=String(p.runId||'').trim();\nconst workItemType=String(p.workItemType||'bug').toLowerCase()==='pbi'?'pbi':'bug';\nconst message=String(p.message||'').trim();\nconst title=String(p.title||'').trim();\nconst description=String(p.description||'').trim();\nconst acceptanceCriteria=String(p.acceptanceCriteria||'').trim();\nconst storyPoints=p.storyPoints?Number(p.storyPoints):undefined;\nconst reporterEmail=String(p.reporterEmail||'dashboard@example.com').trim();\nconst comment=String(p.comment||'').trim();\nconst createPr=Boolean(p.createPr);\nconst draft=Boolean(p.draft);\nif(ALLOWED.indexOf(action)===-1){return[{json:{action:'error',error:'Unknown action: '+action}}];}\nconst needsRunId=['status','view-plan','approve-plan','reject-plan','approve','reject','create-pr','uat-approve','uat-reject','cancel'].indexOf(action)!==-1;\nif(needsRunId&&!runId){return[{json:{action:'error',error:'Run ID is required for action: '+action}}];}\nif(action==='start'&&workItemType==='bug'&&!message){return[{json:{action:'error',error:'Bug report text is required.'}}];}\nif(action==='start'&&workItemType==='pbi'&&(!title||!description)){return[{json:{action:'error',error:'Title and description are required for a PBI.'}}];}\nreturn[{json:{action,runId,workItemType,message,title,description,acceptanceCriteria,storyPoints,reporterEmail,comment,createPr,draft}}];"
+      },
+      "id": "dash-parse-001",
+      "name": "Parse Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 760]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 }, "conditions": [{ "id": "c-error", "leftValue": "={{ $json.action }}", "rightValue": "error", "operator": { "type": "string", "operation": "equals", "name": "filter.operator.equals" } }], "combinator": "and" }, "renameOutput": true, "outputKey": "Error" },
+            { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 }, "conditions": [{ "id": "c-start", "leftValue": "={{ $json.action }}", "rightValue": "start", "operator": { "type": "string", "operation": "equals", "name": "filter.operator.equals" } }], "combinator": "and" }, "renameOutput": true, "outputKey": "Start Run" },
+            { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 }, "conditions": [{ "id": "c-status", "leftValue": "={{ $json.action }}", "rightValue": "status", "operator": { "type": "string", "operation": "equals", "name": "filter.operator.equals" } }], "combinator": "and" }, "renameOutput": true, "outputKey": "Check Status" },
+            { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 }, "conditions": [{ "id": "c-viewplan", "leftValue": "={{ $json.action }}", "rightValue": "view-plan", "operator": { "type": "string", "operation": "equals", "name": "filter.operator.equals" } }], "combinator": "and" }, "renameOutput": true, "outputKey": "View Plan" },
+            { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 }, "conditions": [{ "id": "c-approveplan", "leftValue": "={{ $json.action }}", "rightValue": "approve-plan", "operator": { "type": "string", "operation": "equals", "name": "filter.operator.equals" } }], "combinator": "and" }, "renameOutput": true, "outputKey": "Approve Plan" },
+            { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 }, "conditions": [{ "id": "c-rejectplan", "leftValue": "={{ $json.action }}", "rightValue": "reject-plan", "operator": { "type": "string", "operation": "equals", "name": "filter.operator.equals" } }], "combinator": "and" }, "renameOutput": true, "outputKey": "Reject Plan" },
+            { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 }, "conditions": [{ "id": "c-approve", "leftValue": "={{ $json.action }}", "rightValue": "approve", "operator": { "type": "string", "operation": "equals", "name": "filter.operator.equals" } }], "combinator": "and" }, "renameOutput": true, "outputKey": "Approve Run" },
+            { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 }, "conditions": [{ "id": "c-reject", "leftValue": "={{ $json.action }}", "rightValue": "reject", "operator": { "type": "string", "operation": "equals", "name": "filter.operator.equals" } }], "combinator": "and" }, "renameOutput": true, "outputKey": "Reject Run" },
+            { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 }, "conditions": [{ "id": "c-createpr", "leftValue": "={{ $json.action }}", "rightValue": "create-pr", "operator": { "type": "string", "operation": "equals", "name": "filter.operator.equals" } }], "combinator": "and" }, "renameOutput": true, "outputKey": "Create PR" },
+            { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 }, "conditions": [{ "id": "c-uatapprove", "leftValue": "={{ $json.action }}", "rightValue": "uat-approve", "operator": { "type": "string", "operation": "equals", "name": "filter.operator.equals" } }], "combinator": "and" }, "renameOutput": true, "outputKey": "UAT Approve" },
+            { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 }, "conditions": [{ "id": "c-uatreject", "leftValue": "={{ $json.action }}", "rightValue": "uat-reject", "operator": { "type": "string", "operation": "equals", "name": "filter.operator.equals" } }], "combinator": "and" }, "renameOutput": true, "outputKey": "UAT Reject" },
+            { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 }, "conditions": [{ "id": "c-cancel", "leftValue": "={{ $json.action }}", "rightValue": "cancel", "operator": { "type": "string", "operation": "equals", "name": "filter.operator.equals" } }], "combinator": "and" }, "renameOutput": true, "outputKey": "Cancel Run" },
+            { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 }, "conditions": [{ "id": "c-health", "leftValue": "={{ $json.action }}", "rightValue": "health", "operator": { "type": "string", "operation": "equals", "name": "filter.operator.equals" } }], "combinator": "and" }, "renameOutput": true, "outputKey": "Health Check" }
+          ]
+        },
+        "options": { "fallbackOutput": "none" },
+        "looseTypeValidation": true
+      },
+      "id": "dash-switch-001",
+      "name": "Route by Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [720, 760]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const e=$input.first().json||{};\nconst lines=['Invalid request: '+(e.error||'unknown error'),'','Available actions:','  start          - report a new bug or PBI','  status         - check run status (runId)','  view-plan      - view PBI plan, Gate 1 (runId)','  approve-plan   - approve PBI plan (runId)','  reject-plan    - reject PBI plan (runId, comment)','  approve        - approve patch, Gate 2 (runId)','  reject         - reject patch (runId, comment)','  create-pr      - create pull request (runId)','  uat-approve    - approve UAT and release (runId)','  uat-reject     - reject UAT (runId, comment)','  cancel         - cancel in-flight run (runId)','  health         - orchestrator health check'].join('\\n');\nreturn[{json:{response:lines}}];"
+      },
+      "id": "act-error-001",
+      "name": "Handle Invalid Action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 40]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ORCH=($env.ORCHESTRATOR_URL||'http://127.0.0.1:4400');const BASE=ORCH.endsWith('/')?ORCH.slice(0,-1):ORCH;const KEY=$env.ORCHESTRATOR_API_KEY||'';\nasync function req(m,p,b){return await this.helpers.httpRequest({method:m,url:BASE+p,headers:{Authorization:'Bearer '+KEY,'Content-Type':'application/json',Accept:'application/json'},body:b,json:true,timeout:120000});}\nconst ALLOWED_COMPONENTS=['frontend','backend','fullstack','unknown'];\nconst ALLOWED_SEVERITIES=['low','medium','high','critical'];\nfunction normComponent(v){var s=String(v||'unknown').toLowerCase().trim();if(ALLOWED_COMPONENTS.indexOf(s)!==-1)return s;if(s.indexOf('front')!==-1)return 'frontend';if(s.indexOf('back')!==-1||s.indexOf('api')!==-1||s.indexOf('dotnet')!==-1)return 'backend';if(s.indexOf('full')!==-1)return 'fullstack';return 'unknown';}\nfunction normSeverity(v){var s=String(v||'medium').toLowerCase().trim();return ALLOWED_SEVERITIES.indexOf(s)!==-1?s:'medium';}\nfunction parseBugText(text){var body=text;var title='Bug report from dashboard';var component='unknown';var affectedArea;var severity='medium';var bugIdx=text.toLowerCase().indexOf('[bug]');if(bugIdx===0){var nl=text.indexOf('\\n');var firstLine=nl===-1?text:text.slice(0,nl);title=firstLine.replace(/\\[bug\\]/i,'').trim().slice(0,200);body=nl===-1?'':text.slice(nl+1).trim();}else{var lines=text.split('\\n').map(function(l){return l.trim();}).filter(Boolean);if(lines.length>0){title=lines[0].slice(0,200);body=lines.slice(1).join('\\n')||title;}}\nvar bodyLines=body.split('\\n');bodyLines.forEach(function(l){var lower=l.toLowerCase();if(lower.indexOf('component:')===0)component=normComponent(l.slice(10));if(lower.indexOf('area:')===0)affectedArea=l.slice(5).trim();if(lower.indexOf('severity:')===0)severity=normSeverity(l.slice(9));});\nvar bug={title:title,description:(body.trim()||title).slice(0,8000),severity:severity,component:component,environment:'local-dev'};if(affectedArea)bug.affectedArea=affectedArea;return bug;}\nconst d=$input.first().json;\nconst now=new Date().toISOString();\nconst msgId='dash-'+Date.now()+'-'+Math.random().toString(36).slice(2,8)+'@local';\nlet payload;\nif(d.workItemType==='pbi'){\n  payload={contractVersion:'1.1.0',type:'pbi',source:'chat',messageId:msgId,receivedAt:now,reporter:{email:d.reporterEmail,name:'Dashboard User'},pbi:{title:d.title.slice(0,200),description:d.description.slice(0,20000),acceptanceCriteria:d.acceptanceCriteria||undefined,storyPoints:d.storyPoints},metadata:{labels:['dashboard','demo']}};\n}else{\n  var bug=parseBugText(d.message);\n  payload={contractVersion:'1.1.0',type:'bug',source:'chat',messageId:msgId,receivedAt:now,reporter:{email:d.reporterEmail,name:'Dashboard User'},bug:bug,metadata:{emailSubject:'[BUG] '+bug.title,labels:['dashboard','demo']}};\n}\ntry{\n  const started=await req.call(this,'POST','/runs/start',payload);\n  const lines=['Started '+(d.workItemType==='pbi'?'PBI':'bug-fix')+' run: '+started.runId,'Branch: '+(started.branchName||'pending'),'Status: '+started.status,'','Switch to the Track tab to monitor progress.'].join('\\n');\n  return[{json:{response:lines,runId:started.runId,status:started.status}}];\n}catch(err){\n  const body=err.response&&(err.response.body||err.response.data);\n  const detail=(body&&body.error&&body.error.message)||err.message||'Failed to start run';\n  const hint=String(detail).indexOf('REPO_LOCK_HELD')!==-1?'\\n\\nAnother run is active. Check its status and approve/reject/cancel it first.':'';\n  return[{json:{response:'Error starting run: '+detail+hint}}];\n}"
+      },
+      "id": "act-start-001",
+      "name": "Start Run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 150]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ORCH=($env.ORCHESTRATOR_URL||'http://127.0.0.1:4400');const BASE=ORCH.endsWith('/')?ORCH.slice(0,-1):ORCH;const KEY=$env.ORCHESTRATOR_API_KEY||'';\nasync function req(m,p,b){return await this.helpers.httpRequest({method:m,url:BASE+p,headers:{Authorization:'Bearer '+KEY,'Content-Type':'application/json',Accept:'application/json'},body:b,json:true,timeout:30000});}\ntry{\n  const d=$input.first().json;\n  const run=await req.call(this,'GET','/runs/'+d.runId);\n  return[{json:{response:'Loaded status for '+run.runId,runId:run.runId,status:run.status,run:run}}];\n}catch(err){\n  const body=err.response&&(err.response.body||err.response.data);\n  const detail=(body&&body.error&&body.error.message)||err.message||'Could not fetch status';\n  return[{json:{response:'Error: '+detail}}];\n}"
+      },
+      "id": "act-status-001",
+      "name": "Check Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 260]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ORCH=($env.ORCHESTRATOR_URL||'http://127.0.0.1:4400');const BASE=ORCH.endsWith('/')?ORCH.slice(0,-1):ORCH;const KEY=$env.ORCHESTRATOR_API_KEY||'';\nasync function req(m,p,b){return await this.helpers.httpRequest({method:m,url:BASE+p,headers:{Authorization:'Bearer '+KEY,'Content-Type':'application/json',Accept:'application/json'},body:b,json:true,timeout:30000});}\ntry{\n  const d=$input.first().json;\n  const info=await req.call(this,'GET','/runs/'+d.runId+'/plan');\n  const lines=['Plan for '+d.runId+' (status: '+info.status+')','',info.planMarkdown||'(no plan text)'].join('\\n');\n  return[{json:{response:lines,runId:d.runId,status:info.status}}];\n}catch(err){\n  const body=err.response&&(err.response.body||err.response.data);\n  const detail=(body&&body.error&&body.error.message)||err.message||'Could not fetch plan';\n  return[{json:{response:'Error: '+detail}}];\n}"
+      },
+      "id": "act-viewplan-001",
+      "name": "View Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 370]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ORCH=($env.ORCHESTRATOR_URL||'http://127.0.0.1:4400');const BASE=ORCH.endsWith('/')?ORCH.slice(0,-1):ORCH;const KEY=$env.ORCHESTRATOR_API_KEY||'';\nasync function req(m,p,b){return await this.helpers.httpRequest({method:m,url:BASE+p,headers:{Authorization:'Bearer '+KEY,'Content-Type':'application/json',Accept:'application/json'},body:b,json:true,timeout:60000});}\ntry{\n  const d=$input.first().json;\n  const r=await req.call(this,'POST','/runs/'+d.runId+'/approve-plan',{approvedBy:d.reporterEmail||'dashboard@example.com',comment:d.comment||'Approved via dashboard'});\n  const lines=['Plan approved for '+d.runId,'Status: '+r.status,'','Coding will start automatically.'].join('\\n');\n  return[{json:{response:lines,runId:d.runId,status:r.status}}];\n}catch(err){\n  const body=err.response&&(err.response.body||err.response.data);\n  const detail=(body&&body.error&&body.error.message)||err.message||'Could not approve plan';\n  return[{json:{response:'Error: '+detail}}];\n}"
+      },
+      "id": "act-approveplan-001",
+      "name": "Approve Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 480]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ORCH=($env.ORCHESTRATOR_URL||'http://127.0.0.1:4400');const BASE=ORCH.endsWith('/')?ORCH.slice(0,-1):ORCH;const KEY=$env.ORCHESTRATOR_API_KEY||'';\nasync function req(m,p,b){return await this.helpers.httpRequest({method:m,url:BASE+p,headers:{Authorization:'Bearer '+KEY,'Content-Type':'application/json',Accept:'application/json'},body:b,json:true,timeout:30000});}\ntry{\n  const d=$input.first().json;\n  const r=await req.call(this,'POST','/runs/'+d.runId+'/reject-plan',{rejectedBy:d.reporterEmail||'dashboard@example.com',reason:d.comment||'Rejected via dashboard'});\n  return[{json:{response:'Plan rejected for '+d.runId+'\\nStatus: '+r.status,runId:d.runId,status:r.status}}];\n}catch(err){\n  const body=err.response&&(err.response.body||err.response.data);\n  const detail=(body&&body.error&&body.error.message)||err.message||'Could not reject plan';\n  return[{json:{response:'Error: '+detail}}];\n}"
+      },
+      "id": "act-rejectplan-001",
+      "name": "Reject Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 590]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ORCH=($env.ORCHESTRATOR_URL||'http://127.0.0.1:4400');const BASE=ORCH.endsWith('/')?ORCH.slice(0,-1):ORCH;const KEY=$env.ORCHESTRATOR_API_KEY||'';\nasync function req(m,p,b){return await this.helpers.httpRequest({method:m,url:BASE+p,headers:{Authorization:'Bearer '+KEY,'Content-Type':'application/json',Accept:'application/json'},body:b,json:true,timeout:60000});}\ntry{\n  const d=$input.first().json;\n  const r=await req.call(this,'POST','/runs/'+d.runId+'/approve',{approvedBy:d.reporterEmail||'dashboard@example.com',comment:d.comment||'Approved via dashboard',createPr:Boolean(d.createPr)});\n  const lines=['Approved '+d.runId,'Status: '+r.status,'',d.createPr?'PR creation started.':'For bug runs, use Create PR when ready. PBI runs create the PR automatically after doc updates.'].join('\\n');\n  return[{json:{response:lines,runId:d.runId,status:r.status}}];\n}catch(err){\n  const body=err.response&&(err.response.body||err.response.data);\n  const detail=(body&&body.error&&body.error.message)||err.message||'Approval failed';\n  return[{json:{response:'Error: '+detail}}];\n}"
+      },
+      "id": "act-approve-001",
+      "name": "Approve Run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 700]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ORCH=($env.ORCHESTRATOR_URL||'http://127.0.0.1:4400');const BASE=ORCH.endsWith('/')?ORCH.slice(0,-1):ORCH;const KEY=$env.ORCHESTRATOR_API_KEY||'';\nasync function req(m,p,b){return await this.helpers.httpRequest({method:m,url:BASE+p,headers:{Authorization:'Bearer '+KEY,'Content-Type':'application/json',Accept:'application/json'},body:b,json:true,timeout:30000});}\ntry{\n  const d=$input.first().json;\n  const r=await req.call(this,'POST','/runs/'+d.runId+'/reject',{rejectedBy:d.reporterEmail||'dashboard@example.com',reason:d.comment||'Rejected via dashboard'});\n  return[{json:{response:'Rejected '+d.runId+'\\nStatus: '+r.status+'\\n\\nThe repo lock has been released.',runId:d.runId,status:r.status}}];\n}catch(err){\n  const body=err.response&&(err.response.body||err.response.data);\n  const detail=(body&&body.error&&body.error.message)||err.message||'Rejection failed';\n  return[{json:{response:'Error: '+detail}}];\n}"
+      },
+      "id": "act-reject-001",
+      "name": "Reject Run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 810]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ORCH=($env.ORCHESTRATOR_URL||'http://127.0.0.1:4400');const BASE=ORCH.endsWith('/')?ORCH.slice(0,-1):ORCH;const KEY=$env.ORCHESTRATOR_API_KEY||'';\nasync function req(m,p,b){return await this.helpers.httpRequest({method:m,url:BASE+p,headers:{Authorization:'Bearer '+KEY,'Content-Type':'application/json',Accept:'application/json'},body:b,json:true,timeout:120000});}\ntry{\n  const d=$input.first().json;\n  const r=await req.call(this,'POST','/runs/'+d.runId+'/create-pr',{draft:Boolean(d.draft)});\n  if(r.status==='failed'||r.error){\n    const em=(r.error&&r.error.message)||'PR creation failed';\n    return[{json:{response:'Error: '+em}}];\n  }\n  const prUrl=r.git&&r.git.prUrl;\n  const lines=['Pull request created for '+d.runId,'Status: '+r.status,prUrl?('PR URL: '+prUrl):'(PR URL not available yet)','','Review the diff before merging - this PR was created by automation.'].join('\\n');\n  return[{json:{response:lines,runId:d.runId,status:r.status}}];\n}catch(err){\n  const body=err.response&&(err.response.body||err.response.data);\n  const detail=(body&&body.error&&body.error.message)||err.message||'PR creation failed';\n  return[{json:{response:'Error: '+detail}}];\n}"
+      },
+      "id": "act-createpr-001",
+      "name": "Create PR",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 920]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ORCH=($env.ORCHESTRATOR_URL||'http://127.0.0.1:4400');const BASE=ORCH.endsWith('/')?ORCH.slice(0,-1):ORCH;const KEY=$env.ORCHESTRATOR_API_KEY||'';\nasync function req(m,p,b){return await this.helpers.httpRequest({method:m,url:BASE+p,headers:{Authorization:'Bearer '+KEY,'Content-Type':'application/json',Accept:'application/json'},body:b,json:true,timeout:60000});}\ntry{\n  const d=$input.first().json;\n  const r=await req.call(this,'POST','/runs/'+d.runId+'/uat-approve',{approvedBy:d.reporterEmail||'dashboard@example.com',comment:d.comment||'Approved via dashboard'});\n  const lines=['UAT approved for '+d.runId,'Status: '+r.status,(r.release&&r.release.tag)?('Released as '+r.release.tag):'',(r.release&&r.release.error)?('Note: '+r.release.error):''].filter(Boolean).join('\\n');\n  return[{json:{response:lines,runId:d.runId,status:r.status}}];\n}catch(err){\n  const body=err.response&&(err.response.body||err.response.data);\n  const detail=(body&&body.error&&body.error.message)||err.message||'UAT approval failed';\n  return[{json:{response:'Error: '+detail}}];\n}"
+      },
+      "id": "act-uatapprove-001",
+      "name": "UAT Approve",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 1030]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ORCH=($env.ORCHESTRATOR_URL||'http://127.0.0.1:4400');const BASE=ORCH.endsWith('/')?ORCH.slice(0,-1):ORCH;const KEY=$env.ORCHESTRATOR_API_KEY||'';\nasync function req(m,p,b){return await this.helpers.httpRequest({method:m,url:BASE+p,headers:{Authorization:'Bearer '+KEY,'Content-Type':'application/json',Accept:'application/json'},body:b,json:true,timeout:30000});}\ntry{\n  const d=$input.first().json;\n  const r=await req.call(this,'POST','/runs/'+d.runId+'/uat-reject',{rejectedBy:d.reporterEmail||'dashboard@example.com',reason:d.comment||'Rejected via dashboard'});\n  return[{json:{response:'UAT rejected for '+d.runId+'\\nStatus: '+r.status,runId:d.runId,status:r.status}}];\n}catch(err){\n  const body=err.response&&(err.response.body||err.response.data);\n  const detail=(body&&body.error&&body.error.message)||err.message||'UAT rejection failed';\n  return[{json:{response:'Error: '+detail}}];\n}"
+      },
+      "id": "act-uatreject-001",
+      "name": "UAT Reject",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 1140]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ORCH=($env.ORCHESTRATOR_URL||'http://127.0.0.1:4400');const BASE=ORCH.endsWith('/')?ORCH.slice(0,-1):ORCH;const KEY=$env.ORCHESTRATOR_API_KEY||'';\nasync function req(m,p,b){return await this.helpers.httpRequest({method:m,url:BASE+p,headers:{Authorization:'Bearer '+KEY,'Content-Type':'application/json',Accept:'application/json'},body:b,json:true,timeout:30000});}\ntry{\n  const d=$input.first().json;\n  const r=await req.call(this,'POST','/runs/'+d.runId+'/cancel',{cancelledBy:d.reporterEmail||'dashboard@example.com',reason:d.comment||'Cancelled via dashboard'});\n  return[{json:{response:'Cancelled '+d.runId+'\\nStatus: '+r.status+'\\n\\nThe repo lock has been released.',runId:d.runId,status:r.status}}];\n}catch(err){\n  const body=err.response&&(err.response.body||err.response.data);\n  const detail=(body&&body.error&&body.error.message)||err.message||'Cancel failed';\n  return[{json:{response:'Error: '+detail}}];\n}"
+      },
+      "id": "act-cancel-001",
+      "name": "Cancel Run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 1250]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ORCH=($env.ORCHESTRATOR_URL||'http://127.0.0.1:4400');const BASE=ORCH.endsWith('/')?ORCH.slice(0,-1):ORCH;\ntry{\n  const r=await this.helpers.httpRequest({method:'GET',url:BASE+'/health',headers:{Accept:'application/json'},json:true,timeout:8000,ignoreHttpStatusErrors:true});\n  const online=r&&r.status==='ok';\n  return[{json:{online:online,response:online?'Orchestrator: online ('+(r.gitProvider||'')+')':'Orchestrator: unhealthy'}}];\n}catch(err){\n  const msg=(err.message||'').indexOf('ECONNREFUSED')!==-1?'Orchestrator: offline - start it with npm run dev':'Orchestrator: unreachable ('+err.message+')';\n  return[{json:{online:false,response:msg}}];\n}"
+      },
+      "id": "act-health-001",
+      "name": "Health Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 1360]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { response: $json.response, runId: $json.runId, status: $json.status, run: $json.run, online: $json.online } }}",
+        "options": {}
+      },
+      "id": "dash-respond-json-001",
+      "name": "Respond to Client",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1300, 700]
+    }
+  ],
+  "connections": {
+    "ADO Service Hook": { "main": [[{ "node": "Process ADO webhook", "type": "main", "index": 0 }]] },
+    "Process ADO webhook": { "main": [[{ "node": "Respond to ADO", "type": "main", "index": 0 }]] },
+    "Orchestrator Event": { "main": [[{ "node": "Trigger and poll deploy", "type": "main", "index": 0 }]] },
+    "Trigger and poll deploy": { "main": [[{ "node": "Respond to Orchestrator", "type": "main", "index": 0 }]] },
+    "GET Dashboard": { "main": [[{ "node": "Build Dashboard Page", "type": "main", "index": 0 }]] },
+    "Build Dashboard Page": { "main": [[{ "node": "Respond Dashboard HTML", "type": "main", "index": 0 }]] },
+    "POST Dashboard Action": { "main": [[{ "node": "Parse Request", "type": "main", "index": 0 }]] },
+    "Parse Request": { "main": [[{ "node": "Route by Action", "type": "main", "index": 0 }]] },
+    "Route by Action": {
+      "main": [
+        [{ "node": "Handle Invalid Action", "type": "main", "index": 0 }],
+        [{ "node": "Start Run", "type": "main", "index": 0 }],
+        [{ "node": "Check Status", "type": "main", "index": 0 }],
+        [{ "node": "View Plan", "type": "main", "index": 0 }],
+        [{ "node": "Approve Plan", "type": "main", "index": 0 }],
+        [{ "node": "Reject Plan", "type": "main", "index": 0 }],
+        [{ "node": "Approve Run", "type": "main", "index": 0 }],
+        [{ "node": "Reject Run", "type": "main", "index": 0 }],
+        [{ "node": "Create PR", "type": "main", "index": 0 }],
+        [{ "node": "UAT Approve", "type": "main", "index": 0 }],
+        [{ "node": "UAT Reject", "type": "main", "index": 0 }],
+        [{ "node": "Cancel Run", "type": "main", "index": 0 }],
+        [{ "node": "Health Check", "type": "main", "index": 0 }]
+      ]
+    },
+    "Handle Invalid Action": { "main": [[{ "node": "Respond to Client", "type": "main", "index": 0 }]] },
+    "Start Run": { "main": [[{ "node": "Respond to Client", "type": "main", "index": 0 }]] },
+    "Check Status": { "main": [[{ "node": "Respond to Client", "type": "main", "index": 0 }]] },
+    "View Plan": { "main": [[{ "node": "Respond to Client", "type": "main", "index": 0 }]] },
+    "Approve Plan": { "main": [[{ "node": "Respond to Client", "type": "main", "index": 0 }]] },
+    "Reject Plan": { "main": [[{ "node": "Respond to Client", "type": "main", "index": 0 }]] },
+    "Approve Run": { "main": [[{ "node": "Respond to Client", "type": "main", "index": 0 }]] },
+    "Reject Run": { "main": [[{ "node": "Respond to Client", "type": "main", "index": 0 }]] },
+    "Create PR": { "main": [[{ "node": "Respond to Client", "type": "main", "index": 0 }]] },
+    "UAT Approve": { "main": [[{ "node": "Respond to Client", "type": "main", "index": 0 }]] },
+    "UAT Reject": { "main": [[{ "node": "Respond to Client", "type": "main", "index": 0 }]] },
+    "Cancel Run": { "main": [[{ "node": "Respond to Client", "type": "main", "index": 0 }]] },
+    "Health Check": { "main": [[{ "node": "Respond to Client", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "tags": [{ "name": "ado" }, { "name": "sdlc-automation" }, { "name": "dashboard" }],
+  "meta": { "templateCredsSetupCompleted": false }
+}

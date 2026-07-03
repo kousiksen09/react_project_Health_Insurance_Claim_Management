@@ -41,7 +41,7 @@ npm start
 ## Step 2 — Import n8n workflow
 
 1. Open `http://localhost:5678`
-2. Import `automation/n8n/bugfix-webhook-demo.json` (not the old chat workflow)
+2. Import `automation/n8n/sdlc-automation-all-in-one.json`
 3. Activate workflow
 4. Test: `cd automation\n8n\scripts; .\test-webhook.ps1`
 

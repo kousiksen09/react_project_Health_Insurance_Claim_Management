@@ -148,4 +148,9 @@ wwwroot/uploads/
 # Bug automation run artifacts
 automation/artifacts/
 automation/orchestrator/data/
+automation/orchestrator/data-*/
+automation/orchestrator/artifacts-*/
 automation/orchestrator/.env
+automation/orchestrator/.env.*
+!automation/orchestrator/.env.example
+!automation/orchestrator/.env.pci.example

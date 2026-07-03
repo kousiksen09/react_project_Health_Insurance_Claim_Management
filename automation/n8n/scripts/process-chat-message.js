@@ -84,16 +84,33 @@ function formatRunSummary(run) {
   const analysis = run.analysis ?? {};
   const validation = run.validation ?? {};
   const git = run.git ?? {};
+  const plan = run.plan;
+  const coverage = run.coverage;
+  const aiReview = run.aiReview;
+  const deploy = run.deploy;
+  const uat = run.uat;
   const files = (analysis.changedFiles ?? []).join(', ') || '(none)';
+
+  const nextActionHint =
+    run.status === 'awaiting_plan_approval'
+      ? `To view the plan: view-plan ${run.runId}\nTo approve: approve-plan ${run.runId}\nTo reject: reject-plan ${run.runId} reason here`
+      : run.status === 'awaiting_approval'
+        ? `To approve: approve ${run.runId}\nTo reject: reject ${run.runId} reason here`
+        : run.status === 'awaiting_uat'
+          ? `To approve UAT & release: uat-approve ${run.runId}\nTo reject: uat-reject ${run.runId} reason here`
+          : '';
+
   return [
-    `Run: ${run.runId}`,
+    `Run: ${run.runId} (${run.type ?? 'bug'})`,
     `Status: ${run.status}`,
     `Branch: ${git.branchName ?? 'n/a'}`,
     '',
+    plan ? `Plan: ${plan.taskCount} task(s), ${plan.estimatedTotalLoc} est. LOC, release impact ${plan.releaseImpact}` : '',
+    plan ? '' : '',
     'Summary:',
     analysis.bugSummary ?? '(pending)',
     '',
-    'Root cause:',
+    'Root cause / approach:',
     analysis.rootCauseSummary ?? '(pending)',
     '',
     `Changed files: ${files}`,
@@ -103,12 +120,16 @@ function formatRunSummary(run) {
     `- testsPassed: ${validation.testsPassed ?? 'n/a'}`,
     `- testSummary: ${validation.testSummary ?? 'n/a'}`,
     validation.failureReason ? `- failureReason: ${validation.failureReason}` : '',
+    coverage?.ran ? `- coverage: ${coverage.weak ? 'WEAK (below ' + coverage.minThresholdPct + '%)' : 'ok'}` : '',
+    aiReview?.ran ? `- AI review: ${aiReview.issuesFound} issue(s), ${aiReview.highSeverityCount} high severity` : '',
+    '',
+    deploy ? `Deploy: ${deploy.status}${deploy.url ? ' — ' + deploy.url : ''}` : '',
+    uat && uat.status !== 'not_applicable' ? `UAT: ${uat.status}` : '',
+    run.release ? `Release: ${run.release.merged ? 'merged' : 'not merged'}${run.release.tag ? ' tag=' + run.release.tag : ''}` : '',
     '',
     `Artifacts: automation/artifacts/${run.runId}/`,
     '',
-    run.status === 'awaiting_approval'
-      ? `To approve: approve ${run.runId}\nTo reject: reject ${run.runId} reason here`
-      : '',
+    nextActionHint,
     run.error?.message === 'DIRTY_WORKING_TREE'
       ? 'Error: DIRTY_WORKING_TREE — set ALLOW_DIRTY_REPO=true in orchestrator/.env and restart orchestrator'
       : run.error ? `Error: ${run.error.message}` : '',
@@ -150,7 +171,9 @@ async function pollRun(runId) {
 }
 
 function parseBugIntake(text) {
-  const approveMatch = text.match(/^(approve|reject|create-pr|status|cancel)\s+(\S+)/i);
+  const approveMatch = text.match(
+    /^(approve-plan|reject-plan|view-plan|uat-approve|uat-reject|approve|reject|create-pr|status|cancel)\s+(\S+)/i,
+  );
   if (approveMatch) {
     return { command: approveMatch[1].toLowerCase(), runId: approveMatch[2], rest: text.slice(approveMatch[0].length).trim() };
   }
@@ -249,11 +272,16 @@ try {
       'No chat message found. Fields received: ' + keys,
       '',
       'Commands:',
-      '  [BUG] <title>          — start a new bug-fix run',
+      '  [BUG] <title>          — start a new bug-fix run (demo/local; ADO intake is preferred)',
       '  status <runId>         — check run status',
-      '  approve <runId>        — approve run for PR creation',
-      '  reject <runId> [reason]— reject run',
+      '  view-plan <runId>      — show the PBI plan awaiting approval (Gate 1)',
+      '  approve-plan <runId>   — approve the plan; coding starts automatically',
+      '  reject-plan <runId> [reason] — reject the plan; no code is written',
+      '  approve <runId>        — approve the patch for PR creation (Gate 2)',
+      '  reject <runId> [reason]— reject the patch',
       '  create-pr <runId>      — create GitHub PR (requires GITHUB_TOKEN)',
+      '  uat-approve <runId>    — approve UAT and release (merge + tag + close ADO item)',
+      '  uat-reject <runId> [reason] — reject UAT',
       '  cancel <runId>         — cancel in-flight run',
       '',
       'Example bug report:',
@@ -266,6 +294,60 @@ try {
   }
 
   const parsed = parseBugIntake(chatInput);
+
+  if (parsed.command === 'view-plan') {
+    const planInfo = await apiRequest.call(this, 'GET', `/runs/${parsed.runId}/plan`);
+    return reply([
+      `Plan for ${parsed.runId} (status: ${planInfo.status}, planApproval: ${planInfo.planApproval?.status})`,
+      '',
+      planInfo.planMarkdown,
+      '',
+      planInfo.planApproval?.status === 'pending'
+        ? `To approve: approve-plan ${parsed.runId}\nTo reject: reject-plan ${parsed.runId} reason here`
+        : '',
+    ].filter(Boolean).join('\n'));
+  }
+
+  if (parsed.command === 'approve-plan') {
+    const result = await apiRequest.call(this, 'POST', `/runs/${parsed.runId}/approve-plan`, {
+      approvedBy: 'n8n-chat@example.com',
+      comment: 'Approved via n8n chat',
+    });
+    return reply([
+      `Plan approved for ${parsed.runId}`,
+      `Status: ${result.status}`,
+      result.message ?? '',
+    ].filter(Boolean).join('\n'));
+  }
+
+  if (parsed.command === 'reject-plan') {
+    const result = await apiRequest.call(this, 'POST', `/runs/${parsed.runId}/reject-plan`, {
+      rejectedBy: 'n8n-chat@example.com',
+      reason: parsed.rest || 'Rejected via n8n chat',
+    });
+    return reply(`Plan rejected for ${parsed.runId} — status: ${result.status}`);
+  }
+
+  if (parsed.command === 'uat-approve') {
+    const result = await apiRequest.call(this, 'POST', `/runs/${parsed.runId}/uat-approve`, {
+      approvedBy: 'n8n-chat@example.com',
+      comment: 'Approved via n8n chat',
+    });
+    return reply([
+      `UAT approved for ${parsed.runId}`,
+      `Status: ${result.status}`,
+      result.release?.tag ? `Released as ${result.release.tag}` : '',
+      result.release?.error ? `Note: ${result.release.error}` : '',
+    ].filter(Boolean).join('\n'));
+  }
+
+  if (parsed.command === 'uat-reject') {
+    const result = await apiRequest.call(this, 'POST', `/runs/${parsed.runId}/uat-reject`, {
+      rejectedBy: 'n8n-chat@example.com',
+      reason: parsed.rest || 'Rejected via n8n chat',
+    });
+    return reply(`UAT rejected for ${parsed.runId} — status: ${result.status}`);
+  }
 
   if (parsed.command === 'reject') {
     const result = await apiRequest.call(this, 'POST', `/runs/${parsed.runId}/reject`, {

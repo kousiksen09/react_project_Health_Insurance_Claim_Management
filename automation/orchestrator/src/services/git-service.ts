@@ -114,6 +114,15 @@ export const gitService = {
     return { files: [...files].sort(), commands };
   },
 
+  async getDiff(baseBranch: string, maxChars = 40000): Promise<{ diff: string; truncated: boolean; commands: CommandResult[] }> {
+    const commands: CommandResult[] = [];
+    const diff = await runGit('git.diff-full', ['diff', baseBranch, 'HEAD'], commands);
+    const unstaged = await runGit('git.diff-full-unstaged', ['diff'], commands);
+    const combined = [diff.stdout, unstaged.stdout].filter(Boolean).join('\n');
+    const truncated = combined.length > maxChars;
+    return { diff: truncated ? combined.slice(0, maxChars) : combined, truncated, commands };
+  },
+
   async listCommitsSinceBase(baseBranch: string): Promise<{
     commits: Array<{ sha: string; message: string }>;
     commands: CommandResult[];

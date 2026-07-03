@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config.js';
-import type { AgentRunResult, AnalysisResult, BugIntakePayload, RunResult, ValidationResult } from '../types/contracts.js';
+import type { AgentRunResult, AnalysisResult, RunResult, ValidationResult, WorkItemIntakePayload } from '../types/contracts.js';
 
 /**
  * Persist per-run artifacts under automation/artifacts/<runId>/.
@@ -13,7 +13,7 @@ export const artifactService = {
     return dir;
   },
 
-  async writeIntake(runId: string, intake: BugIntakePayload): Promise<void> {
+  async writeIntake(runId: string, intake: WorkItemIntakePayload): Promise<void> {
     const dir = await this.ensureRunDirectory(runId);
     await fs.writeFile(path.join(dir, 'intake.json'), JSON.stringify(intake, null, 2), 'utf8');
   },
@@ -102,6 +102,16 @@ export const artifactService = {
       'agent-prompt.md',
       'agent-transcript.jsonl',
       'agent-transcript.md',
+      // PBI pipeline (present only on 'pbi' type runs)
+      'plan-prompt.md',
+      'plan-transcript.md',
+      'plan.json',
+      'plan.md',
+      'plan-questions.md',
+      'test-gen-transcript.md',
+      'ai-review.md',
+      'coverage-delta.json',
+      'doc-update.md',
     ];
   },
 };
