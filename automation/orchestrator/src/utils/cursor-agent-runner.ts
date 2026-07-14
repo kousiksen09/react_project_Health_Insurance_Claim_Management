@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config.js';
-import { extractAssistantText } from './parse-agent-output.js';
+import { extractAssistantText, mergeAssistantStream } from './parse-agent-output.js';
 import type { CommandResult } from '../types/contracts.js';
 
 export interface AgentTurnResult {
@@ -61,7 +61,7 @@ export async function runSingleAgentTurn(
 
     return {
       success: result.status !== 'error',
-      text: assistantChunks.join('\n').trim(),
+      text: mergeAssistantStream(assistantChunks, result.waitResult),
       agentId,
       agentRunId,
       durationMs: result.durationMs,
@@ -72,7 +72,7 @@ export async function runSingleAgentTurn(
     const message = error instanceof Error ? error.message : 'Unknown agent error';
     return {
       success: false,
-      text: assistantChunks.join('\n').trim(),
+      text: mergeAssistantStream(assistantChunks),
       agentId,
       agentRunId,
       commandsExecuted,
@@ -91,7 +91,7 @@ async function sendAndCollect(
   transcriptPath: string,
   commandsExecuted: CommandResult[],
   assistantChunks: string[],
-): Promise<{ agentRunId: string; status: string; durationMs?: number }> {
+): Promise<{ agentRunId: string; status: string; durationMs?: number; waitResult?: string }> {
   const run = await agent.send(prompt);
 
   for await (const event of run.stream()) {
@@ -118,7 +118,6 @@ async function sendAndCollect(
   }
 
   const waitResult = await run.wait();
-  if (waitResult.result) assistantChunks.push(waitResult.result);
 
-  return { agentRunId: run.id, status: waitResult.status, durationMs: waitResult.durationMs };
+  return { agentRunId: run.id, status: waitResult.status, durationMs: waitResult.durationMs, waitResult: waitResult.result };
 }

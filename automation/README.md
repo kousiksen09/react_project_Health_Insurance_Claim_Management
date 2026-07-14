@@ -49,7 +49,7 @@ npm run dev
 
 - API: `https://localhost:7021/swagger`
 - UI: `http://localhost:5173`
-- Login: `kousik.sen@pwc.com` / `admin123`
+- Login: `kousik.sen@gmail.com` / `admin123`
 
 ## Layout
 

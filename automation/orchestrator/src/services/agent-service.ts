@@ -3,7 +3,7 @@ import path from 'node:path';
 import { config } from '../config.js';
 import { buildBugFixPrompt } from '../utils/prompt-builder.js';
 import { buildPbiTaskPrompt } from '../utils/pbi-task-prompt-builder.js';
-import { extractAssistantText, parseStructuredSections } from '../utils/parse-agent-output.js';
+import { extractAssistantText, mergeAssistantStream, parseStructuredSections } from '../utils/parse-agent-output.js';
 import type { AgentRunResult, BugIntakePayload, CommandResult, PbiIntakePayload, PlanTask, WorkItemPlan } from '../types/contracts.js';
 import { repoInspectionService } from './repo-inspection-service.js';
 import { artifactService } from './artifact-service.js';
@@ -130,13 +130,9 @@ export const agentService = {
 
       const waitResult = await run.wait();
       durationMs = waitResult.durationMs;
-      if (waitResult.result) {
-        assistantChunks.push(waitResult.result);
-      }
-
       agent.close();
 
-      const fullText = assistantChunks.join('\n').trim();
+      const fullText = mergeAssistantStream(assistantChunks, waitResult.result);
       const sections = parseStructuredSections(fullText);
       const { gitService } = await import('./git-service.js');
       const { files, commands: gitCommands } = await gitService.listChangedFiles(baseBranch);
@@ -278,9 +274,7 @@ export const agentService = {
               }
             }
             const waitResult = await run.wait();
-            if (waitResult.result) assistantChunks.push(waitResult.result);
-
-            const text = assistantChunks.join('\n').trim();
+            const text = mergeAssistantStream(assistantChunks, waitResult.result);
             await artifactService.writeTextArtifact(runId, `task-${task.id}.md`, text || '(no assistant text captured)');
 
             if (waitResult.status === 'error') {

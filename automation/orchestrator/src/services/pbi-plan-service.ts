@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config.js';
 import { buildPbiPlanPrompt } from '../utils/pbi-plan-prompt-builder.js';
-import { extractAssistantText } from '../utils/parse-agent-output.js';
+import { extractAssistantText, mergeAssistantStream } from '../utils/parse-agent-output.js';
 import { workItemPlanSchema } from '../types/schemas.js';
 import type { PbiIntakePayload, PlanSummary, WorkItemPlan } from '../types/contracts.js';
 import { repoInspectionService } from './repo-inspection-service.js';
@@ -25,11 +25,12 @@ function shouldDryRun(): boolean {
 }
 
 function extractPlanJson(text: string): unknown {
-  const match = text.match(/<PLAN>([\s\S]*?)<\/PLAN>/i);
-  if (!match) {
+  const matches = [...text.matchAll(/<PLAN>([\s\S]*?)<\/PLAN>/gi)];
+  if (matches.length === 0) {
     throw new Error('Agent response did not contain a <PLAN>...</PLAN> block');
   }
-  const raw = match[1].trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '');
+  // Use the last block — the agent may mention <PLAN> in prose before the real fence.
+  const raw = matches[matches.length - 1][1].trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '');
   return JSON.parse(raw);
 }
 
@@ -176,10 +177,9 @@ export const pbiPlanService = {
       }
 
       const waitResult = await run.wait();
-      if (waitResult.result) assistantChunks.push(waitResult.result);
       agent.close();
 
-      const fullText = assistantChunks.join('\n').trim();
+      const fullText = mergeAssistantStream(assistantChunks, waitResult.result);
       await artifactService.writeTextArtifact(runId, 'plan-transcript.md', fullText || '(no assistant text captured)');
 
       if (waitResult.status === 'error') {

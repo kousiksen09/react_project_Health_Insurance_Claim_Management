@@ -38,6 +38,20 @@ The dashboard calls `POST /webhook/sdlc/action` on the same workflow (no separat
 3. When status is `awaiting_plan_approval` or `awaiting_approval` or `awaiting_uat`, open **Approve** → **Load** → use the action buttons
 4. For bug runs after approval, **Create PR** if not created automatically
 
+### PBI runs without ADO Service Hook permissions
+
+All PBI runs are sent to the orchestrator with `source: "ado"` (required by the intake
+contract), so the dashboard always attaches an ADO work-item reference:
+
+- **ADO Work Item ID field left blank** — the workflow auto-generates a local placeholder
+  work item (e.g. `#900012345`, tagged `dummy-ado-id`). The run proceeds through the full
+  pipeline normally; nothing is written back to ADO. Use this when you don't have ADO
+  Service Hook or write permissions.
+- **ADO Work Item ID field filled in** — the workflow builds a real `dev.azure.com` link
+  using that ID plus the optional `ADO_ORG` / `ADO_PROJECT` values in
+  `automation/n8n-local/.env`. If the orchestrator also has `ADO_PAT` configured, its
+  best-effort ADO comments/state updates will target that real work item.
+
 ## 2. Executions tab (progress in n8n UI)
 
 While a run is processing:

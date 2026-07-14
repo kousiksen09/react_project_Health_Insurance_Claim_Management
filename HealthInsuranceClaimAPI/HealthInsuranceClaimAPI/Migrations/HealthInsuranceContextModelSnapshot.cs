@@ -517,7 +517,7 @@ namespace HealthInsuranceClaimAPI.Migrations
                         {
                             Id = 1,
                             CreatedAt = new DateTime(2024, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Email = "kousik.sen@pwc.com",
+                            Email = "kousik.sen@gmail.com",
                             FirstName = "Admin",
                             IsActive = true,
                             LastName = "User",

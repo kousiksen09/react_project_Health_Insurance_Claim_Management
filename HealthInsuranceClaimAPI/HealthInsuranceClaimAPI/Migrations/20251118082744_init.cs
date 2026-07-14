@@ -295,7 +295,7 @@ namespace HealthInsuranceClaimAPI.Migrations
             migrationBuilder.InsertData(
                 table: "Users",
                 columns: new[] { "Id", "CreatedAt", "Email", "FirstName", "IsActive", "LastName", "PasswordHash", "ProfileImageUrl", "Role" },
-                values: new object[] { 1, new DateTime(2024, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), "kousik.sen@pwc.com", "Admin", true, "User", "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9", null, 1 });
+                values: new object[] { 1, new DateTime(2024, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc), "kousik.sen@gmail.com", "Admin", true, "User", "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9", null, 1 });
 
             migrationBuilder.CreateIndex(
                 name: "IX_ClaimDocuments_ClaimId",

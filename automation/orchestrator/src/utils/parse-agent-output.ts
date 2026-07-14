@@ -45,3 +45,15 @@ export function extractAssistantText(content: unknown): string {
     })
     .join('');
 }
+
+/**
+ * Cursor SDK streaming emits many small assistant deltas. They must be concatenated
+ * with no separator — joining with `\n` injects literal newlines into JSON/XML output
+ * and breaks parsing (e.g. `"summary\n": "..."` inside a <PLAN> block).
+ * Prefer `waitResult` when present; it is the authoritative final message.
+ */
+export function mergeAssistantStream(chunks: string[], waitResult?: string | null): string {
+  const final = waitResult?.trim();
+  if (final) return final;
+  return chunks.join('').trim();
+}

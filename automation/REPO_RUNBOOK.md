@@ -121,7 +121,7 @@ This applies migration `20251118082744_init` and creates tables in `Insudb`.
 
 | Entity | Details |
 |--------|---------|
-| Admin user | Email: `kousik.sen@pwc.com`, Password: `admin123` (SHA-256 hash in DB) |
+| Admin user | Email: `kousik.sen@gmail.com`, Password: `admin123` (SHA-256 hash in DB) |
 | Policies | `POL1` Basic Health, `POL2` Family Health, `POL3` Senior Citizen |
 
 Password hashing: `AuthService.ComputeSha256Hash()` — not BCrypt despite package reference.
@@ -255,7 +255,7 @@ VITE v7.x.x  ready in ... ms
 1. Backend running on `https://localhost:7021`
 2. Frontend running on `http://localhost:5173`
 3. Browse to `http://localhost:5173/login`
-4. Login: `kousik.sen@pwc.com` / `admin123`
+4. Login: `kousik.sen@gmail.com` / `admin123`
 5. Confirm redirect to `/dashboard` (Admin dashboard)
 
 ### 5.4 Frontend scripts (`package.json`)
@@ -514,7 +514,7 @@ No automation hooks exist in application code today. Integration is **external**
 | A7 | `CURSOR_API_KEY` available for real agent runs (stub mode otherwise) |
 | A8 | n8n can reach orchestrator at `127.0.0.1:4400` on same machine or via tunnel |
 | A9 | One automation run at a time (repo lock) to avoid git conflicts |
-| A10 | Admin seed credentials (`kousik.sen@pwc.com` / `admin123`) remain valid after migration |
+| A10 | Admin seed credentials (`kousik.sen@gmail.com` / `admin123`) remain valid after migration |
 
 ---
 
@@ -538,5 +538,5 @@ npm run dev
 # --- Browser ---
 # http://localhost:5173/login
 # https://localhost:7021/swagger
-# Login: kousik.sen@pwc.com / admin123
+# Login: kousik.sen@gmail.com / admin123
 ```
